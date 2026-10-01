@@ -5,7 +5,7 @@ set -e
 # --- Configuration ---
 STACKS="kafka-on-eks"
 TERRAFORM_DIR="terraform"
-AWS_REGION="${AWS_REGION:-us-west-2}"
+AWS_REGION="${AWS_REGION:-us-east-2}"
 KUBECONFIG_FILE="kubeconfig.yaml"
 
 

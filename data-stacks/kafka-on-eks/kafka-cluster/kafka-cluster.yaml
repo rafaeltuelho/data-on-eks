@@ -25,68 +25,15 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
-    resources:
-      requests:
-        memory: 58Gi
-        cpu: "6"
-      limits:
-        memory: 64Gi
-        cpu: "8"
-    jvmOptions:
-      "-Xmx": "6g"
-      "-Xms": "4g"
-    storage:
-      type: jbod
-      volumes:
-        - id: 0
-          type: persistent-claim
-          size: 1000Gi
-          class: gp3
-          deleteClaim: false
-    template:
-      pod:
-        affinity:
-          nodeAffinity:
-            requiredDuringSchedulingIgnoredDuringExecution:
-              nodeSelectorTerms:
-                - matchExpressions:
-                    - key: karpenter.k8s.aws/instance-family
-                      operator: In
-                      values:
-                        - r8g
-                    - key: karpenter.sh/capacity-type
-                      operator: In
-                      values:
-                        - on-demand
-          podAntiAffinity:
-            requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                - key: "strimzi.io/pool-name"
-                  operator: In
-                  values:
-                  - broker
-                  - controller
-              topologyKey: "kubernetes.io/hostname"
-        topologySpreadConstraints:
-          - labelSelector:
-              matchExpressions:
-              - key: "strimzi.io/pool-name"
-                operator: In
-                values:
-                  - broker
-                  - controller
-            maxSkew: 1
-            topologyKey: topology.kubernetes.io/zone
-            whenUnsatisfiable: ScheduleAnyway
+    # Benchmark flavor (Redpanda BYOC Tier 1): resources, JVM options, storage and
+    # scheduling are defined per KafkaNodePool in terraform/manifests/kafka/node-pool-*.yaml.
     metricsConfig:
       type: jmxPrometheusExporter
       valueFrom:
         configMapKeyRef:
           name: kafka-metrics
           key: kafka-metrics-config.yml
-    rack:
-      topologyKey: topology.kubernetes.io/zone
+    # rack awareness removed: all brokers run in a single AZ (us-east-2a), like the Redpanda BYOC cluster
   entityOperator:
     topicOperator: {}
     userOperator: {}

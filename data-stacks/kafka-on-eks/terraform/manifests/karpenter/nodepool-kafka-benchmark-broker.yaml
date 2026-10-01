@@ -1,0 +1,49 @@
+# Kafka brokers for the Redpanda BYOC Tier 1 benchmark.
+# Mirrors the BYOC broker hardware: 3x m7gd.large (Graviton3, 2 vCPU, 8 GiB, 1x 118 GB NVMe),
+# on-demand, single AZ (us-east-2a). Uses the kafka-benchmark-broker-nvme EC2NodeClass so the local static
+# provisioner exposes the instance store as the `local-storage` StorageClass.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: kafka-benchmark-broker
+  namespace: karpenter
+spec:
+  template:
+    metadata:
+      labels:
+        # Required so the local-static-provisioner DaemonSet runs on these nodes
+        NodeGroupType: EphemeralStorageLocalProvisioner
+        benchmark/role: kafka-broker
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: kafka-benchmark-broker-nvme
+      # Dedicated to brokers: keeps other workloads off the benchmark nodes
+      taints:
+        - key: benchmark/dedicated
+          value: kafka-broker
+          effect: NoSchedule
+      # Local NVMe data is lost if a node is replaced; never expire these nodes
+      expireAfter: Never
+      # Bounds the drain on cleanup (do-not-disrupt pods would otherwise block node deletion)
+      terminationGracePeriod: 10m
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["m7gd.large"]
+        # Same AZ as the Redpanda BYOC cluster (same account, so same physical AZ)
+        - key: topology.kubernetes.io/zone
+          operator: In
+          values: ["us-east-2a"]
+  limits:
+    cpu: "8"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 600s
+    budgets:
+      - nodes: "0"
+  weight: 1
