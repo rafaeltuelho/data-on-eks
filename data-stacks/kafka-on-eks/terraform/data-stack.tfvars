@@ -12,6 +12,9 @@ deployment_id = "DO-NOT-EDIT-AUTO-GENERATED"
 # (3x m7gd.large brokers + 2x m5.large utility nodes, us-east-2a)
 #---------------------------------------------------------------
 
+# Benchmark worker VPC (same clients used against Redpanda BYOC); see vpc-peering-benchmark.tf
+benchmark_peer_vpc_id = "vpc-031a34d4639335164"
+
 # Not needed for the Kafka benchmark
 enable_jupyterhub    = false
 enable_ingress_nginx = false
