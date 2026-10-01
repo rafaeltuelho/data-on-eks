@@ -30,7 +30,7 @@ spec:
         authentication:
           type: scram-sha-512
         configuration:
-          controllerClass: service.k8s.aws/nlb   # AWS Load Balancer Controller
+          class: service.k8s.aws/nlb   # sets Service loadBalancerClass -> AWS Load Balancer Controller
           loadBalancerSourceRanges:
             - 10.100.0.0/16
     # ACLs are enforced (see kafka-user-admin.yaml). ANONYMOUS is a super user so the
