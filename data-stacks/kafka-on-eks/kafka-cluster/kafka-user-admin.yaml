@@ -1,0 +1,48 @@
+# Benchmark user for the `external` (TLS + SCRAM-SHA-512) listener, mirroring the
+# Redpanda BYOC `admin` user ACLs. The password is NOT stored here; create it first:
+#   kubectl create secret generic admin-password -n kafka --from-literal=password='<password>'
+# Redpanda's Subject / Schema Registry ACLs have no Kafka equivalent (no Schema Registry here).
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: admin
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: data-on-eks
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: admin-password
+          key: password
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: cluster
+        operations:
+          - All
+        host: "*"
+      - resource:
+          type: group
+          name: "*"
+          patternType: literal
+        operations:
+          - All
+        host: "*"
+      - resource:
+          type: topic
+          name: "*"
+          patternType: literal
+        operations:
+          - All
+        host: "*"
+      - resource:
+          type: transactionalId
+          name: "*"
+          patternType: literal
+        operations:
+          - All
+        host: "*"

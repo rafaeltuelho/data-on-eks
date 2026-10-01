@@ -21,14 +21,24 @@ spec:
         tls: true
       # Benchmark flavor: internal NLBs (1 bootstrap + 1 per broker) for the benchmark
       # workers in the peered VPC vpc-031a34d4639335164 (10.100.0.0/16).
+      # TLS + SCRAM to match Redpanda BYOC (Strimzi supports SCRAM-SHA-512 only).
+      # Clients trust the cluster CA from secret data-on-eks-cluster-ca-cert.
       - name: external
         port: 9094
         type: loadbalancer
-        tls: false
+        tls: true
+        authentication:
+          type: scram-sha-512
         configuration:
           controllerClass: service.k8s.aws/nlb   # AWS Load Balancer Controller
           loadBalancerSourceRanges:
             - 10.100.0.0/16
+    # ACLs are enforced (see kafka-user-admin.yaml). ANONYMOUS is a super user so the
+    # unauthenticated in-cluster `plain`/`tls` listeners keep working (helper.sh, examples).
+    authorization:
+      type: simple
+      superUsers:
+        - ANONYMOUS
     config:
       offsets.topic.replication.factor: 3
       transaction.state.log.replication.factor: 3
