@@ -22,8 +22,9 @@ spec:
           value: kafka-controller
           effect: NoSchedule
       expireAfter: Never
-      # Bounds the drain on cleanup (do-not-disrupt pods would otherwise block node deletion)
-      terminationGracePeriod: 10m
+      # Bounds the drain on cleanup (do-not-disrupt pods would otherwise block node deletion).
+      # Must stay below the 300s nodepool-delete wait in infra/terraform/cleanup.sh.
+      terminationGracePeriod: 4m
       requirements:
         - key: karpenter.sh/capacity-type
           operator: In
