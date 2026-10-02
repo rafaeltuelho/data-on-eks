@@ -19,6 +19,7 @@ is modified. When you deploy, `./deploy.sh` copies the overlay files over the ba
 - [Connecting the benchmark clients](#connecting-the-benchmark-clients)
 - [Benchmark fairness notes](#benchmark-fairness-notes)
 - [Tuning guide](#tuning-guide)
+- [Troubleshooting](#troubleshooting)
 - [Cleanup](#cleanup)
 
 ## Target sizing
@@ -71,6 +72,17 @@ source set-env.sh                        # KUBECONFIG + AWS_REGION
 kubectl get nodes -L node.kubernetes.io/instance-type,topology.kubernetes.io/zone
 kubectl get kafka,kafkanodepool,kafkauser -n kafka
 ```
+
+Use `./deploy.sh` from the stack directory. Don't run `infra/terraform/install.sh` directly, and
+don't follow the older AWS blog post (`streaming/kafka/install.sh`, a layout that no longer
+exists). `deploy.sh` sets the stack, region and overlay before calling the shared installer.
+
+**kubectl access:** `deploy.sh` writes `kubeconfig.yaml` in the stack directory, and
+`source set-env.sh` points `KUBECONFIG` at it in the current shell. To add the cluster to
+`~/.kube/config` instead, run `aws eks update-kubeconfig --name <name> --region <region>`.
+
+The first run writes a random `deployment_id` into `data-stack.tfvars`. Keep it, because later
+runs and `cleanup.sh` use it to find tagged resources. Don't commit it.
 
 Terraform creates the Kafka cluster, its node pools and the SCRAM user. Nothing needs a manual
 `kubectl apply`. To change the cluster, edit the files under `terraform/manifests/` and run
@@ -196,13 +208,79 @@ kubectl get kafka data-on-eks -n kafka \
 
 ## Connecting the benchmark clients
 
+### 1. Get the bootstrap address
+
 ```bash
-# On your workstation
-kubectl get secret data-on-eks-cluster-ca-cert -n kafka -o jsonpath='{.data.ca\.crt}' | base64 -d > strimzi-ca.crt
-# copy strimzi-ca.crt to each client host
+cd data-stacks/kafka-on-eks && source set-env.sh
+kubectl get kafka data-on-eks -n kafka \
+  -o jsonpath='{.status.listeners[?(@.name=="external")].bootstrapServers}'
+# -> k8s-kafka-dataonek-<id>.elb.<region>.amazonaws.com:9094
 ```
 
-Kafka client / OpenMessaging Benchmark driver properties:
+Clients need only this **one bootstrap address** as the seed. After the first metadata request,
+they connect to each broker at its advertised address, which is that broker's own NLB. Don't use
+a per-broker NLB as the seed: if that broker restarts, new clients can't bootstrap.
+
+### 2. Export the cluster CA certificate
+
+Clients trust the **cluster CA**, not individual broker certificates. Strimzi signs every broker
+certificate with it.
+
+```bash
+kubectl get secret data-on-eks-cluster-ca-cert -n kafka \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > strimzi-ca.crt
+openssl x509 -in strimzi-ca.crt -noout -subject -enddate   # O=io.strimzi, CN=cluster-ca v0
+scp strimzi-ca.crt <user>@<client-host>:~/                 # to every benchmark client
+```
+
+The CA certificate isn't secret, but it's specific to one deployment, so don't commit it.
+Strimzi renews it after about a year.
+
+Optional: from a client host, confirm that the broker certificate includes the NLB hostnames. You
+should see `Verify return code: 0 (ok)`, and the SANs should list the bootstrap NLB plus the
+broker's own NLB.
+```bash
+openssl s_client -connect <bootstrap-nlb-dns>:9094 -CAfile strimzi-ca.crt </dev/null 2>/dev/null \
+  | openssl x509 -noout -ext subjectAltName
+```
+
+### 3. Create an rpk profile (on each client host)
+
+```bash
+rpk profile create strimzi \
+  --set brokers=<bootstrap-nlb-dns>:9094 \
+  --set tls.enabled=true \
+  --set tls.ca=/home/<user>/strimzi-ca.crt \
+  --set sasl.mechanism=SCRAM-SHA-512 \
+  --set user=admin \
+  --set pass='<password>' \
+  --description "Strimzi benchmark cluster (TLS + SCRAM-SHA-512)"
+
+rpk profile print            # check the brokers hostname carefully (starts with k8s-)
+rpk cluster info             # lists 3 brokers, each advertised at its own NLB:9094
+```
+
+- **Fixing a value:** `rpk profile set brokers=<bootstrap-nlb-dns>:9094`.
+- **Cert path:** use an absolute path for `tls.ca`. The profile stores it as written.
+- **Password:** the profile keeps it in plain text in `~/.config/rpk/rpk.yaml`. To keep it out of
+  the profile, leave out `pass` and run `export RPK_PASS='<password>'` instead.
+- **Switching clusters:** `rpk profile use strimzi`, `rpk profile use <redpanda-profile>`, or
+  one-off with `--profile strimzi`. `rpk profile list` shows all profiles.
+- **Redpanda-only commands:** `rpk cluster health` and other Admin API commands (port 9644) don't
+  work against Kafka. Use Kafka-protocol commands: `rpk cluster info`, `rpk topic`, `rpk group`,
+  `rpk acl`.
+
+### 4. Smoke test
+
+```bash
+rpk topic create smoke -p 3 -r 3 -c min.insync.replicas=2
+echo hello | rpk topic produce smoke --acks=-1
+rpk topic consume smoke -n 1
+rpk topic delete smoke
+```
+
+### 5. Kafka client / OpenMessaging Benchmark driver properties
+
 ```properties
 bootstrap.servers=<bootstrap-nlb-dns>:9094
 security.protocol=SASL_SSL
@@ -211,12 +289,19 @@ sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule require
 ssl.truststore.type=PEM
 ssl.truststore.location=/path/to/strimzi-ca.crt
 ```
+The only difference from a Redpanda BYOC client config is `sasl.mechanism`.
 
-Smoke test with rpk from a client host:
+### In-cluster access (without the NLBs)
+
+The internal listeners need no auth and are only reachable inside the cluster:
+`data-on-eks-kafka-bootstrap.kafka.svc:9092` (plain) and `:9093` (TLS). To get a throwaway client:
 ```bash
-rpk cluster info -X brokers=<bootstrap-nlb-dns>:9094 -X tls.enabled=true -X tls.ca=strimzi-ca.crt \
-  -X sasl.mechanism=SCRAM-SHA-512 -X user=admin -X pass='<password>'
+kubectl run kafka-client -n kafka -it --rm --restart=Never \
+  --image=quay.io/strimzi/kafka:0.47.0-kafka-3.9.0 -- \
+  bin/kafka-broker-api-versions.sh --bootstrap-server data-on-eks-kafka-bootstrap:9092
 ```
+`kubectl port-forward` from a laptop doesn't work. The brokers advertise in-cluster or NLB
+hostnames, and the laptop can't reach those.
 
 ## Benchmark fairness notes
 
@@ -256,6 +341,19 @@ Constraints to keep in mind:
   is about 1.9 CPU and about 6.7Gi.
 - **Base files:** `karpenter.tf`, `kafka.tf`, `storage.tf` and `ec2nodeclass.yaml` are full copies
   of base files. Upstream changes to those files won't reach this stack until you merge them by hand.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `Invalid index ... local.s3_express_azs is empty tuple` while planning `module.vpc` | The region has no S3 Express AZ IDs in the base list. Add them to `terraform/storage.tf`, as done for us-east-2. |
+| `lookup k8s-...elb... : no such host` on a client | Typo in the broker address (for example a missing `k` in `k8s-`). Check `rpk profile print`. |
+| Client connection hangs | Check that the client is in `benchmark_peer_vpc_id`, that the peering is active and that the peer route table has the secondary CIDR → `pcx-...`. Hosts in another VPC peered with the client VPC (e.g. a bastion in the Redpanda BYOC VPC) can't reach Strimzi, because peering isn't transitive and the BYOC VPC's CIDR overlaps. |
+| Lists brokers, then hangs | That broker's NLB targets are still registering. Wait 1–2 minutes. `kubectl get svc -n kafka` shows all 4 `external` services with hostnames when they're ready. |
+| `SASL authentication failed` | Check `user`, `pass` and `sasl.mechanism=SCRAM-SHA-512`. `kubectl get kafkauser admin -n kafka` must show `READY=True`, and Terraform must have run with `TF_VAR_benchmark_kafka_admin_password` set. |
+| TLS `certificate signed by unknown authority` | `tls.ca` / `ssl.truststore.location` must point to the exported `strimzi-ca.crt`. |
+| `unknown field ...` when applying a Strimzi resource | Check the field against the Strimzi 0.47 CRDs. For example, the load balancer class is `configuration.class`. `kubectl apply --dry-run=server -f <file>` validates without applying. |
+| Brokers `Pending` | `kubectl get nodeclaims -o wide`, plus the logs of the `local-static-provisioner` pods in `kube-system` on the broker nodes. `kubectl get pv` should show one `local-storage` PV per broker node. |
 
 ## Cleanup
 

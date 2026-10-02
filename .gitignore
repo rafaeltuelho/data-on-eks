@@ -70,3 +70,6 @@ node_modules
 gen-ai/inference/stable-diffusion-rayserve-gpu/locust/__pycache__/*
 website/package-lock.json
 website/package.json
+
+# Benchmark fork: exported Strimzi cluster CA (deployment-specific)
+strimzi-ca.crt
