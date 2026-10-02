@@ -17,6 +17,7 @@ is modified. When you deploy, `./deploy.sh` copies the overlay files over the ba
 - [Network setup: VPC peering](#network-setup-vpc-peering)
 - [Exposing Kafka outside EKS: internal NLBs](#exposing-kafka-outside-eks-internal-nlbs)
 - [Connecting the benchmark clients](#connecting-the-benchmark-clients)
+- [Monitoring (Prometheus + Grafana)](#monitoring-prometheus--grafana)
 - [Benchmark fairness notes](#benchmark-fairness-notes)
 - [Tuning guide](#tuning-guide)
 - [Troubleshooting](#troubleshooting)
@@ -132,6 +133,13 @@ ingress-nginx are disabled through tfvars.
 ArgoCD, Karpenter, kube-prometheus-stack, cert-manager, KEDA, Fluent Bit, ClickHouse and the
 event collector are kept. They install the Strimzi operator and monitoring, or they're
 referenced by other base files. None of them run on broker or controller nodes.
+
+### Monitoring
+
+| File | Change |
+|---|---|
+| `terraform/kafka-benchmark-monitoring.tf` | **New.** Applies `monitoring-manifests/` (PodMonitors + Strimzi Grafana dashboards). |
+| `monitoring-manifests/grafana-strimzi-*.yaml` | Dashboard ConfigMaps moved to the `monitoring` namespace, where Grafana runs. |
 
 ### Networking
 
@@ -318,6 +326,29 @@ kubectl run kafka-client -n kafka -it --rm --restart=Never \
 ```
 `kubectl port-forward` from a laptop doesn't work. The brokers advertise in-cluster or NLB
 hostnames, and the laptop can't reach those.
+
+## Monitoring (Prometheus + Grafana)
+
+`terraform/kafka-benchmark-monitoring.tf` applies `monitoring-manifests/`:
+
+- **PodMonitors** for the brokers, controllers, Kafka exporter, entity operator and cluster operator.
+  Prometheus selects PodMonitors in all namespaces.
+- **Grafana dashboards:** *Strimzi Kafka*, *Strimzi Exporter* (consumer lag, topic metrics) and
+  *Strimzi Operators*. They're ConfigMaps in `monitoring`, labeled `grafana_dashboard: "1"`. The
+  upstream files pointed at a nonexistent `kube-prometheus-stack` namespace; this fork fixes them.
+
+Open Grafana from your workstation. HTTP port-forwarding works fine, unlike Kafka:
+```bash
+kubectl get secret grafana-admin-secret -n monitoring -o jsonpath='{.data.admin-user}' | base64 -d; echo
+kubectl get secret grafana-admin-secret -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d; echo
+kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80   # http://localhost:3000
+```
+
+**Cruise Control isn't a console.** It's a REST service for load monitoring and rebalancing,
+driven through `KafkaRebalance` resources (`terraform/manifests/kafka/rebalance.yaml`). Strimzi
+doesn't ship its web UI, so it isn't exposed. For a Kafka UI (topics, groups, messages), any
+Kafka console works against the `external` listener or the in-cluster listeners. For example,
+Redpanda Console with the same SCRAM and CA settings as the clients.
 
 ## Benchmark fairness notes
 
