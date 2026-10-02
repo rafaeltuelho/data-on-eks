@@ -126,6 +126,12 @@ exists). `deploy.sh` sets the stack, region and overlay before calling the share
 The first run writes a random `deployment_id` into `data-stack.tfvars`. Keep it, because later
 runs and `cleanup.sh` use it to find tagged resources. Don't commit it.
 
+When it finishes, `deploy.sh` waits up to 10 minutes for the external listener, then prints a
+**Kafka Benchmark (Strimzi) Access** summary. It shows the bootstrap address, saves the cluster CA
+to `./strimzi-ca.crt` (gitignored) and prints its path, shows the SCRAM-SHA-512 username and
+password, a filled-in `rpk profile create` command, and the Grafana port-forward with Grafana's
+credentials.
+
 Terraform creates the Kafka cluster, its node pools and the SCRAM user. Nothing needs a manual
 `kubectl apply`. To change the cluster, edit the files under `terraform/manifests/` and run
 `./deploy.sh` again.
