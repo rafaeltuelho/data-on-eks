@@ -94,8 +94,18 @@ if [ -f "../data-stack.tfvars" ]; then
   TERRAFORM_COMMAND="$TERRAFORM_COMMAND -var-file=../data-stack.tfvars"
 fi
 
+# The staged (-target) applies only matter for a fresh cluster, where Karpenter must
+# exist before the workloads (see above). On an existing deployment Karpenter is already
+# running, and -target would fail whenever the configuration contains `moved` blocks
+# ("Moved resource instances excluded by targeting"). So skip the stages and do a
+# single full apply.
+if terraform state list 2>/dev/null | command grep -q '^kubectl_manifest\.karpenter_resources'; then
+  print_status "Existing deployment detected (Karpenter in state): skipping staged applies."
+  targets=()
+fi
+
 # Apply modules in sequence
-for target in "${targets[@]}"
+for target in ${targets[@]+"${targets[@]}"}
 do
   print_status "Applying module $target..."
   if [ -t 1 ]; then

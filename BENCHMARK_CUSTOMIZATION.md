@@ -171,6 +171,7 @@ because other base files reference them and they cost almost nothing.
 | `teams.tf` | Team Kubernetes objects and Pod Identity roles gated by `enable_data_teams`. The IAM policies stay, because JupyterHub and Karpenter reference them. |
 | `flink.tf` | `count = enable_flink_operator && !enable_emr_on_eks`. |
 | `polaris.tf` | The Trino-side Polaris resources also require `enable_trino`. |
+| `install.sh` | When the state already contains Karpenter (an existing cluster), skip the staged `-target` applies and do one full apply. Targeted applies fail when the config contains `moved` blocks, and the stages are only needed on fresh installs. |
 | `argocd-applications/{cert-manager,clickhouse-operator,flink-operator,argo-workflows,argo-events}.yaml` | Added ArgoCD's `resources-finalizer`, so deleting the Application also deletes its workloads instead of orphaning them. |
 
 Toggle dependencies: `enable_raydata` requires `enable_data_teams`. Polaris's Trino integration
@@ -465,6 +466,7 @@ Constraints to keep in mind:
 | Client connection hangs | Check that the client is in `benchmark_peer_vpc_id`, that the peering is active and that the peer route table has the secondary CIDR → `pcx-...`. Hosts in another VPC peered with the client VPC (e.g. a bastion in the Redpanda BYOC VPC) can't reach Strimzi, because peering isn't transitive and the BYOC VPC's CIDR overlaps. |
 | Commands work but feel slow / sporadic timeouts | Check the per-broker NLBs: `aws elbv2 describe-load-balancers` should show a single subnet (`benchmark_zone`, `100.64.x`) and `ip` targets. If they span 3 AZs with `instance` targets, the `perPodService` annotations are missing. Their `10.0.x` IPs then route to the BYOC VPC from the client VPC, and traffic hops through NodePorts. See [Changing NLB settings](#changing-nlb-settings). |
 | `rpk cluster health` hangs | It calls the Redpanda Admin API on port 9644. The NLBs only listen on 9094, so the connection silently times out. Expected with Kafka. |
+| `Error: Moved resource instances excluded by targeting` during `./deploy.sh` | The deploy ran targeted applies over pending `moved` blocks. The fixed `install.sh` skips the targets on existing clusters. With an older copy, run once: `terraform -chdir=terraform/_local apply -var-file=../data-stack.tfvars`. |
 | After switching a toggle off, the component's pods keep running | Its ArgoCD Application had no `resources-finalizer`, so the workloads were orphaned. Patch the finalizer onto it before the deploy (see below), or delete the leftover resources by hand. |
 | Lists brokers, then hangs | That broker's NLB targets are still registering. Wait 1–2 minutes. `kubectl get svc -n kafka` shows all 4 `external` services with hostnames when they're ready. |
 | `SASL authentication failed` | Check `user`, `pass` and `sasl.mechanism=SCRAM-SHA-512`. `kubectl get kafkauser admin -n kafka` must show `READY=True`, and Terraform must have run with `TF_VAR_benchmark_kafka_admin_password` set. |
