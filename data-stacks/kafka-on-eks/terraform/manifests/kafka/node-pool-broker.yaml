@@ -29,6 +29,15 @@ spec:
         kraftMetadata: shared
         deleteClaim: true
   template:
+    # Per-broker NLBs for the `external` listener (same settings as the bootstrap NLB in
+    # kafka-cluster.yaml). Must live here: with node pools, the Kafka CR perPodService is ignored.
+    perPodService:
+      metadata:
+        annotations:
+          service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+          service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+          service.beta.kubernetes.io/aws-load-balancer-subnets: ${BENCHMARK_NLB_SUBNET_NAME}
+          service.beta.kubernetes.io/aws-load-balancer-attributes: load_balancing.cross_zone.enabled=false
     pod:
       metadata:
         annotations:

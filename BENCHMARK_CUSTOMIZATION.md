@@ -114,7 +114,7 @@ All paths are relative to `data-stacks/kafka-on-eks/`.
 | File | Change |
 |---|---|
 | `terraform/manifests/kafka/kafka-cluster.yaml` | Moved from `kafka-cluster/` and now applied by Terraform as a template. Changes: resources, JVM options, storage and placement moved to the node pools; rack awareness removed (single AZ); `external` listener added (NLB, TLS, SCRAM-SHA-512); simple authorization with `ANONYMOUS` as a super user, so the in-cluster `plain`/`tls` listeners still work. |
-| `terraform/manifests/kafka/node-pool-broker.yaml` | 3 brokers. Requests 1 CPU / 5Gi, no limits (like Redpanda, the broker can use the whole node, including page cache). Heap `-Xms/-Xmx 2g`. 100Gi `local-storage` volume. Pinned to `kafka-benchmark-broker`, one per node. Pods carry `karpenter.sh/do-not-disrupt`. |
+| `terraform/manifests/kafka/node-pool-broker.yaml` | Per-broker NLB annotations (`template.perPodService`). 3 brokers. Requests 1 CPU / 5Gi, no limits (like Redpanda, the broker can use the whole node, including page cache). Heap `-Xms/-Xmx 2g`. 100Gi `local-storage` volume. Pinned to `kafka-benchmark-broker`, one per node. Pods carry `karpenter.sh/do-not-disrupt`. |
 | `terraform/manifests/kafka/node-pool-controller.yaml` | 3 controllers. Requests 250m / 1536Mi, memory limit 2Gi, heap 768m. 20Gi gp3 volume. Pinned to `kafka-benchmark-controller`. |
 | `terraform/manifests/kafka/rebalance.yaml` | `RackAwareGoal` removed, because one rack can't satisfy RF=3. |
 | `terraform/kafka.tf` | A copy of the base file. The only change: Kafka manifests are rendered with `local.benchmark_template_vars`. |
@@ -187,7 +187,10 @@ The `external` listener in `terraform/manifests/kafka/kafka-cluster.yaml` is a S
 - **Load balancers:** Strimzi creates one bootstrap Service and one Service per broker, all of type
   `LoadBalancer`. `configuration.class: service.k8s.aws/nlb` hands them to the AWS Load
   Balancer Controller, which creates **4 internal NLBs**.
-- **NLB annotations** (`template.externalBootstrapService` / `template.perPodService`):
+- **NLB annotations:** `template.externalBootstrapService` in `kafka-cluster.yaml` for the bootstrap NLB,
+  and `template.perPodService` in **`node-pool-broker.yaml`** for the per-broker NLBs. With node
+  pools, Strimzi ignores `perPodService` in the Kafka CR. If it's set there, the broker NLBs fall
+  back to controller defaults: instance targets, every AZ, `10.0.x` subnets. The annotations are
   `scheme: internal`, `nlb-target-type: ip` (traffic goes straight to broker pod IPs, not
   through NodePorts), `subnets: <name>-private-secondary1-<benchmark_zone>`, and cross-zone
   load balancing disabled.
@@ -205,6 +208,19 @@ kubectl get svc -n kafka | grep external        # 4 services with NLB hostnames
 kubectl get kafka data-on-eks -n kafka \
   -o jsonpath='{.status.listeners[?(@.name=="external")].bootstrapServers}'
 ```
+
+### Changing NLB settings
+
+The AWS Load Balancer Controller can't change some settings, such as the scheme or subnets, on an
+NLB that already exists. After you change the NLB annotations, check the controller logs
+(`kubectl logs -n kube-system deploy/aws-load-balancer-controller`). If an NLB didn't update,
+delete its Service. Strimzi recreates it, and the controller provisions a new NLB:
+```bash
+kubectl delete svc -n kafka data-on-eks-broker-0 data-on-eks-broker-1 data-on-eks-broker-2
+```
+New per-broker NLBs get new DNS names. Strimzi updates the advertised listeners and the broker
+certificates with a rolling restart. Clients that bootstrap through the bootstrap NLB pick up the
+new names automatically.
 
 ## Connecting the benchmark clients
 
@@ -328,7 +344,8 @@ hostnames, and the laptop can't reach those.
 | Instance types, AZ, peer VPC, user | `terraform/data-stack.tfvars` |
 | Broker CPU/memory/heap, storage size, replicas | `terraform/manifests/kafka/node-pool-broker.yaml` |
 | Broker config (`num.io.threads`, etc.) | `spec.kafka.config` in `terraform/manifests/kafka/kafka-cluster.yaml` |
-| Listener security / NLB annotations | `terraform/manifests/kafka/kafka-cluster.yaml` |
+| Listener security / bootstrap NLB annotations | `terraform/manifests/kafka/kafka-cluster.yaml` |
+| Per-broker NLB annotations | `template.perPodService` in `terraform/manifests/kafka/node-pool-broker.yaml` |
 | User ACLs | `terraform/manifests/benchmark/kafka-user.yaml` |
 | NVMe filesystem | `terraform/helm-values/local-static-provisioner.yaml` |
 | Broker node kubelet / user data | the `kafka-benchmark-broker-nvme` class in `terraform/manifests/karpenter/ec2nodeclass.yaml` |
@@ -349,6 +366,8 @@ Constraints to keep in mind:
 | `Invalid index ... local.s3_express_azs is empty tuple` while planning `module.vpc` | The region has no S3 Express AZ IDs in the base list. Add them to `terraform/storage.tf`, as done for us-east-2. |
 | `lookup k8s-...elb... : no such host` on a client | Typo in the broker address (for example a missing `k` in `k8s-`). Check `rpk profile print`. |
 | Client connection hangs | Check that the client is in `benchmark_peer_vpc_id`, that the peering is active and that the peer route table has the secondary CIDR → `pcx-...`. Hosts in another VPC peered with the client VPC (e.g. a bastion in the Redpanda BYOC VPC) can't reach Strimzi, because peering isn't transitive and the BYOC VPC's CIDR overlaps. |
+| Commands work but feel slow / sporadic timeouts | Check the per-broker NLBs: `aws elbv2 describe-load-balancers` should show a single subnet (`benchmark_zone`, `100.64.x`) and `ip` targets. If they span 3 AZs with `instance` targets, the `perPodService` annotations are missing. Their `10.0.x` IPs then route to the BYOC VPC from the client VPC, and traffic hops through NodePorts. See [Changing NLB settings](#changing-nlb-settings). |
+| `rpk cluster health` hangs | It calls the Redpanda Admin API on port 9644. The NLBs only listen on 9094, so the connection silently times out. Expected with Kafka. |
 | Lists brokers, then hangs | That broker's NLB targets are still registering. Wait 1–2 minutes. `kubectl get svc -n kafka` shows all 4 `external` services with hostnames when they're ready. |
 | `SASL authentication failed` | Check `user`, `pass` and `sasl.mechanism=SCRAM-SHA-512`. `kubectl get kafkauser admin -n kafka` must show `READY=True`, and Terraform must have run with `TF_VAR_benchmark_kafka_admin_password` set. |
 | TLS `certificate signed by unknown authority` | `tls.ca` / `ssl.truststore.location` must point to the exported `strimzi-ca.crt`. |
