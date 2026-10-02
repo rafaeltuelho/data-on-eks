@@ -29,9 +29,21 @@ benchmark_peer_vpc_id = "vpc-031a34d4639335164"
 # SCRAM-SHA-512 user for the external listener
 benchmark_kafka_admin_username = "admin"
 
-# Not needed for the Kafka benchmark
-enable_jupyterhub    = false
-enable_ingress_nginx = false
+# Not needed for the Kafka benchmark (optional components, see infra/terraform/variables.tf)
+enable_jupyterhub           = false
+enable_ingress_nginx        = false
+enable_event_logging        = false # ClickHouse operator + event-store + event-collector
+enable_aws_for_fluentbit    = false # collects no Kafka logs
+enable_cert_manager         = false # only the ClickHouse operator used it
+enable_keda                 = false
+enable_data_teams           = false # Spark/Flink/Ray team namespaces, RBAC, IAM
+enable_trino                = false
+enable_spark_operator       = false
+enable_spark_history_server = false
+enable_flink_operator       = false
+enable_argo_workflows       = false
+enable_argo_events          = false
+enable_yunikorn             = false
 
 # Replaces the default core node group (same map key). Redpanda BYOC Tier 1 uses
 # 2x m5.large utility nodes; this stack runs more system add-ons (ArgoCD, Karpenter,

@@ -7,6 +7,8 @@ locals {
 # S3 Buckets for Trino
 #---------------------------------------------------------------
 module "trino_s3_bucket" {
+  count = var.enable_trino ? 1 : 0
+
   source  = "terraform-aws-modules/s3-bucket/aws"
   version = "~> 5.0"
 
@@ -30,6 +32,8 @@ module "trino_s3_bucket" {
 }
 
 module "trino_exchange_bucket" {
+  count = var.enable_trino ? 1 : 0
+
   source  = "terraform-aws-modules/s3-bucket/aws"
   version = "~> 5.0"
 
@@ -56,13 +60,15 @@ module "trino_exchange_bucket" {
 # IAM Policies
 #---------------------------------------------------------------
 data "aws_iam_policy_document" "trino_s3_access" {
+  count = var.enable_trino ? 1 : 0
+
 
   statement {
     sid    = "TrinoDataBucketAccess"
     effect = "Allow"
     resources = [
-      "arn:aws:s3:::${module.trino_s3_bucket.s3_bucket_id}",
-      "arn:aws:s3:::${module.trino_s3_bucket.s3_bucket_id}/*",
+      "arn:aws:s3:::${module.trino_s3_bucket[0].s3_bucket_id}",
+      "arn:aws:s3:::${module.trino_s3_bucket[0].s3_bucket_id}/*",
       "arn:aws:s3:::${module.s3_bucket.s3_bucket_id}/",
       "arn:aws:s3:::${module.s3_bucket.s3_bucket_id}/*"
     ]
@@ -91,13 +97,15 @@ data "aws_iam_policy_document" "trino_s3_access" {
 }
 
 data "aws_iam_policy_document" "trino_exchange_access" {
+  count = var.enable_trino ? 1 : 0
+
 
   statement {
     sid    = "TrinoExchangeBucketAccess"
     effect = "Allow"
     resources = [
-      "arn:aws:s3:::${module.trino_exchange_bucket.s3_bucket_id}",
-      "arn:aws:s3:::${module.trino_exchange_bucket.s3_bucket_id}/*",
+      "arn:aws:s3:::${module.trino_exchange_bucket[0].s3_bucket_id}",
+      "arn:aws:s3:::${module.trino_exchange_bucket[0].s3_bucket_id}/*",
 
     ]
     actions = [
@@ -118,16 +126,20 @@ data "aws_iam_policy_document" "trino_exchange_access" {
 # IAM policies for Trino
 #---------------------------------------------------------------
 resource "aws_iam_policy" "trino_s3_policy" {
+  count = var.enable_trino ? 1 : 0
+
   name        = "${local.name}-trino-s3-policy"
   description = "IAM policy for Trino to access S3 data bucket"
-  policy      = data.aws_iam_policy_document.trino_s3_access.json
+  policy      = data.aws_iam_policy_document.trino_s3_access[0].json
   tags        = local.tags
 }
 
 resource "aws_iam_policy" "trino_exchange_policy" {
+  count = var.enable_trino ? 1 : 0
+
   name        = "${local.name}-trino-exchange-policy"
   description = "IAM policy for Trino to access S3 exchange bucket"
-  policy      = data.aws_iam_policy_document.trino_exchange_access.json
+  policy      = data.aws_iam_policy_document.trino_exchange_access[0].json
   tags        = local.tags
 }
 
@@ -135,14 +147,16 @@ resource "aws_iam_policy" "trino_exchange_policy" {
 # Pod Identity for Trino
 #---------------------------------------------------------------
 module "trino_pod_identity" {
+  count = var.enable_trino ? 1 : 0
+
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.0"
 
   name = "trino"
 
   additional_policy_arns = {
-    s3_policy       = aws_iam_policy.trino_s3_policy.arn
-    exchange_policy = aws_iam_policy.trino_exchange_policy.arn
+    s3_policy       = aws_iam_policy.trino_s3_policy[0].arn
+    exchange_policy = aws_iam_policy.trino_exchange_policy[0].arn
     glue_policy     = "arn:aws:iam::aws:policy/AWSGlueConsoleFullAccess"
   }
 
@@ -159,6 +173,8 @@ module "trino_pod_identity" {
 # Trino Namespace
 #---------------------------------------------------------------
 resource "kubernetes_namespace" "trino" {
+  count = var.enable_trino ? 1 : 0
+
   metadata {
     name = local.trino_namespace
   }
@@ -168,13 +184,15 @@ resource "kubernetes_namespace" "trino" {
 # Trino ArgoCD Application
 #---------------------------------------------------------------
 resource "kubectl_manifest" "trino" {
+  count = var.enable_trino ? 1 : 0
+
 
   yaml_body = templatefile("${path.module}/argocd-applications/trino.yaml", {
     user_values_yaml = indent(8, yamlencode(yamldecode(templatefile("${path.module}/helm-values/trino.yaml", {
       region             = local.region
-      trino_s3_bucket_id = module.trino_s3_bucket.s3_bucket_id
-      exchange_bucket_id = module.trino_exchange_bucket.s3_bucket_id
-      trino_irsa_arn     = module.trino_pod_identity.iam_role_arn
+      trino_s3_bucket_id = module.trino_s3_bucket[0].s3_bucket_id
+      exchange_bucket_id = module.trino_exchange_bucket[0].s3_bucket_id
+      trino_irsa_arn     = module.trino_pod_identity[0].iam_role_arn
       trino_sa           = local.trino_sa
       trino_namespace    = local.trino_namespace
 
@@ -202,6 +220,8 @@ resource "kubectl_manifest" "trino" {
 # KEDA operator is deployed via keda.tf (shared across workloads)
 #---------------------------------------------------------------
 resource "kubectl_manifest" "trino_keda_scaledobject" {
+  count = var.enable_trino ? 1 : 0
+
 
   yaml_body = templatefile("${path.module}/manifests/trino/keda-scaledobject.yaml", {
     trino_namespace = local.trino_namespace
@@ -219,10 +239,51 @@ resource "kubectl_manifest" "trino_keda_scaledobject" {
 #---------------------------------------------------------------
 output "trino_s3_bucket_id" {
   description = "Trino S3 data bucket ID"
-  value       = module.trino_s3_bucket.s3_bucket_id
+  value       = try(module.trino_s3_bucket[0].s3_bucket_id, null)
 }
 
 output "trino_exchange_bucket_id" {
   description = "Trino S3 exchange bucket ID"
-  value       = module.trino_exchange_bucket.s3_bucket_id
+  value       = try(module.trino_exchange_bucket[0].s3_bucket_id, null)
+}
+
+# Resources became optional (count); keep existing state addresses
+moved {
+  from = module.trino_s3_bucket
+  to   = module.trino_s3_bucket[0]
+}
+
+moved {
+  from = module.trino_exchange_bucket
+  to   = module.trino_exchange_bucket[0]
+}
+
+moved {
+  from = aws_iam_policy.trino_s3_policy
+  to   = aws_iam_policy.trino_s3_policy[0]
+}
+
+moved {
+  from = aws_iam_policy.trino_exchange_policy
+  to   = aws_iam_policy.trino_exchange_policy[0]
+}
+
+moved {
+  from = module.trino_pod_identity
+  to   = module.trino_pod_identity[0]
+}
+
+moved {
+  from = kubernetes_namespace.trino
+  to   = kubernetes_namespace.trino[0]
+}
+
+moved {
+  from = kubectl_manifest.trino
+  to   = kubectl_manifest.trino[0]
+}
+
+moved {
+  from = kubectl_manifest.trino_keda_scaledobject
+  to   = kubectl_manifest.trino_keda_scaledobject[0]
 }

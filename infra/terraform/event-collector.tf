@@ -25,6 +25,8 @@ resource "random_password" "clickhouse" {
 # Event Collector Namespace
 #---------------------------------------------------------------
 resource "kubectl_manifest" "logging_namespace" {
+  count = var.enable_event_logging ? 1 : 0
+
   yaml_body = file("${path.module}/manifests/logging/namespace.yaml")
 }
 
@@ -32,6 +34,8 @@ resource "kubectl_manifest" "logging_namespace" {
 # ClickHouse Password Secret
 #---------------------------------------------------------------
 resource "kubernetes_secret" "clickhouse_password" {
+  count = var.enable_event_logging ? 1 : 0
+
   metadata {
     name      = "clickhouse-password"
     namespace = local.namespace
@@ -48,6 +52,8 @@ resource "kubernetes_secret" "clickhouse_password" {
 # ClickHouse Credentials Secret for Fluent Bit
 #---------------------------------------------------------------
 resource "kubernetes_secret" "fluent_bit_clickhouse" {
+  count = var.enable_event_logging ? 1 : 0
+
   metadata {
     name      = "fluent-bit-clickhouse-credentials"
     namespace = local.namespace
@@ -65,6 +71,8 @@ resource "kubernetes_secret" "fluent_bit_clickhouse" {
 # ClickHouse Event Store (ArgoCD Application)
 #---------------------------------------------------------------
 resource "kubectl_manifest" "event_store" {
+  count = var.enable_event_logging ? 1 : 0
+
   yaml_body = templatefile("${path.module}/argocd-applications/event-store.yaml", {
     clickhouse_s3_endpoint = local.clickhouse_s3_endpoint
   })
@@ -81,13 +89,15 @@ resource "kubectl_manifest" "event_store" {
 # ClickHouse Pod Identity for S3 Access
 #---------------------------------------------------------------
 module "clickhouse_pod_identity" {
+  count = var.enable_event_logging ? 1 : 0
+
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.0"
 
   name = "clickhouse"
 
   additional_policy_arns = {
-    s3_access = aws_iam_policy.clickhouse_s3.arn
+    s3_access = aws_iam_policy.clickhouse_s3[0].arn
   }
 
   associations = {
@@ -100,6 +110,8 @@ module "clickhouse_pod_identity" {
 }
 
 resource "aws_iam_policy" "clickhouse_s3" {
+  count = var.enable_event_logging ? 1 : 0
+
   name        = "${local.name}-clickhouse-s3"
   description = "S3 access for ClickHouse cold storage"
 
@@ -127,6 +139,8 @@ resource "aws_iam_policy" "clickhouse_s3" {
 # ClickHouse Credentials Secret for Fluent Bit (kube-system for DaemonSet)
 #---------------------------------------------------------------
 resource "kubernetes_secret" "fluent_bit_clickhouse_kube_system" {
+  count = var.enable_event_logging ? 1 : 0
+
   metadata {
     name      = "fluent-bit-clickhouse-credentials"
     namespace = "kube-system"
@@ -142,6 +156,8 @@ resource "kubernetes_secret" "fluent_bit_clickhouse_kube_system" {
 # K8s Event Collector - Fluent Bit (ArgoCD Application)
 #---------------------------------------------------------------
 resource "kubectl_manifest" "event_collector" {
+  count = var.enable_event_logging ? 1 : 0
+
   yaml_body = templatefile("${path.module}/argocd-applications/event-collector.yaml", {
     user_values_yaml = indent(8, local.fluent_bit_values)
   })
@@ -150,4 +166,45 @@ resource "kubectl_manifest" "event_collector" {
     helm_release.argocd,
     kubernetes_secret.fluent_bit_clickhouse,
   ]
+}
+
+# Resources became optional (count); keep existing state addresses
+moved {
+  from = kubectl_manifest.logging_namespace
+  to   = kubectl_manifest.logging_namespace[0]
+}
+
+moved {
+  from = kubernetes_secret.clickhouse_password
+  to   = kubernetes_secret.clickhouse_password[0]
+}
+
+moved {
+  from = kubernetes_secret.fluent_bit_clickhouse
+  to   = kubernetes_secret.fluent_bit_clickhouse[0]
+}
+
+moved {
+  from = kubectl_manifest.event_store
+  to   = kubectl_manifest.event_store[0]
+}
+
+moved {
+  from = module.clickhouse_pod_identity
+  to   = module.clickhouse_pod_identity[0]
+}
+
+moved {
+  from = aws_iam_policy.clickhouse_s3
+  to   = aws_iam_policy.clickhouse_s3[0]
+}
+
+moved {
+  from = kubernetes_secret.fluent_bit_clickhouse_kube_system
+  to   = kubernetes_secret.fluent_bit_clickhouse_kube_system[0]
+}
+
+moved {
+  from = kubectl_manifest.event_collector
+  to   = kubectl_manifest.event_collector[0]
 }

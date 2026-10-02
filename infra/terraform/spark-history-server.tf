@@ -6,7 +6,7 @@ locals {
     {
       s3_bucket_name            = module.s3_bucket.s3_bucket_id,
       event_log_prefix          = aws_s3_object.this.key,
-      spark_history_server_role = module.spark_history_server_irsa.arn
+      spark_history_server_role = try(module.spark_history_server_irsa[0].arn, "")
     })
   )
 }
@@ -16,6 +16,8 @@ locals {
 # Spark History Server Application
 #---------------------------------------------------------------
 resource "kubectl_manifest" "spark_history_server" {
+  count = var.enable_spark_history_server ? 1 : 0
+
   yaml_body = templatefile("${path.module}/argocd-applications/spark-history-server.yaml", {
     # Place under `helm.valuesObject:` at 8 spaces (adjust if your template indent differs)
     user_values_yaml = indent(8, yamlencode(local.spark_history_server_values))
@@ -34,6 +36,8 @@ resource "kubectl_manifest" "spark_history_server" {
 #---------------------------------------------------------------
 
 module "spark_history_server_irsa" {
+  count = var.enable_spark_history_server ? 1 : 0
+
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts"
   version = "~> 6.0"
   name    = "${module.eks.cluster_name}-shs"
@@ -48,4 +52,15 @@ module "spark_history_server_irsa" {
       namespace_service_accounts = ["${local.spark_history_server_name}:${local.spark_history_server_service_account}"]
     }
   }
+}
+
+# Resources became optional (count); keep existing state addresses
+moved {
+  from = kubectl_manifest.spark_history_server
+  to   = kubectl_manifest.spark_history_server[0]
+}
+
+moved {
+  from = module.spark_history_server_irsa
+  to   = module.spark_history_server_irsa[0]
 }

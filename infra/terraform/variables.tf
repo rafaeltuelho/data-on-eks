@@ -290,3 +290,80 @@ variable "enable_polaris" {
   type        = bool
   default     = false
 }
+
+#---------------------------------------------------------------
+# Optional shared components
+# Default true keeps the existing behaviour of every data stack; a stack can set
+# any of these to false in its data-stack.tfvars to skip the component.
+#---------------------------------------------------------------
+variable "enable_event_logging" {
+  description = "Deploy the event logging stack: ClickHouse operator, ClickHouse event-store (+ Keeper) and the event-collector Fluent Bit (Kubernetes events and Spark logs)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_aws_for_fluentbit" {
+  description = "Deploy the aws-for-fluent-bit DaemonSet (system and Spark pod logs to S3, Spark logs to ClickHouse)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_cert_manager" {
+  description = "Deploy cert-manager (required by the ClickHouse operator)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_keda" {
+  description = "Deploy KEDA (event-driven autoscaling; used by Trino and StarRocks)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_data_teams" {
+  description = "Create the Spark/Flink/Ray team namespaces, service accounts, RBAC and Pod Identity roles (required by enable_raydata)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_trino" {
+  description = "Deploy Trino (and its S3 buckets and IAM). Required for the Trino side of enable_polaris"
+  type        = bool
+  default     = true
+}
+
+variable "enable_spark_operator" {
+  description = "Deploy the Kubeflow Spark operator"
+  type        = bool
+  default     = true
+}
+
+variable "enable_spark_history_server" {
+  description = "Deploy the Spark History Server"
+  type        = bool
+  default     = true
+}
+
+variable "enable_flink_operator" {
+  description = "Deploy the Apache Flink Kubernetes operator (skipped anyway when enable_emr_on_eks is true)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_argo_workflows" {
+  description = "Deploy Argo Workflows"
+  type        = bool
+  default     = true
+}
+
+variable "enable_argo_events" {
+  description = "Deploy Argo Events (and its SQS IAM policy and Pod Identity role)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_yunikorn" {
+  description = "Deploy the Apache YuniKorn batch scheduler"
+  type        = bool
+  default     = true
+}

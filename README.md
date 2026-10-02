@@ -3,6 +3,8 @@
 > benchmark a Strimzi Kafka cluster against a **Redpanda BYOC Tier 1** cluster. The `kafka-on-eks` stack
 > is resized and reconfigured to match Redpanda BYOC Tier 1: same broker instances, single AZ,
 > local NVMe, VPC peering to the benchmark clients, and internal NLBs with TLS + SCRAM.
+> The base `infra/terraform/` gained `enable_*` toggles for optional shared components. They default
+> to `true`, so other stacks are unchanged.
 > See **[BENCHMARK_CUSTOMIZATION.md](BENCHMARK_CUSTOMIZATION.md)** for every change, the configuration
 > inputs, the deploy steps and the network setup.
 

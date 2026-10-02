@@ -5,6 +5,8 @@ locals {
 }
 
 resource "kubectl_manifest" "yunikorn" {
+  count = var.enable_yunikorn ? 1 : 0
+
   yaml_body = templatefile("${path.module}/argocd-applications/apache-yunikorn.yaml", {
     values = indent(8, yamlencode(local.yunikorn_values))
   })
@@ -12,4 +14,10 @@ resource "kubectl_manifest" "yunikorn" {
   depends_on = [
     helm_release.argocd,
   ]
+}
+
+# Resources became optional (count); keep existing state addresses
+moved {
+  from = kubectl_manifest.yunikorn
+  to   = kubectl_manifest.yunikorn[0]
 }

@@ -12,6 +12,8 @@
 # Ref: https://keda.sh/docs/
 #---------------------------------------------------------------
 resource "kubectl_manifest" "keda_operator" {
+  count = var.enable_keda ? 1 : 0
+
   yaml_body = templatefile("${path.module}/argocd-applications/keda.yaml", {
     user_values_yaml = indent(8, yamlencode(yamldecode(templatefile("${path.module}/helm-values/keda.yaml", {}))))
   })
@@ -19,4 +21,10 @@ resource "kubectl_manifest" "keda_operator" {
   depends_on = [
     helm_release.argocd,
   ]
+}
+
+# Resources became optional (count); keep existing state addresses
+moved {
+  from = kubectl_manifest.keda_operator
+  to   = kubectl_manifest.keda_operator[0]
 }

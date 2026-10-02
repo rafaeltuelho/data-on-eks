@@ -5,8 +5,10 @@ This fork of [awslabs/data-on-eks](https://github.com/awslabs/data-on-eks) chang
 benchmarked fairly against a **Redpanda BYOC Tier 1** cluster. The two clusters get the same
 broker hardware, the same AZ, the same client security and the same benchmark clients.
 
-All changes are overlay files in `data-stacks/kafka-on-eks/`. Nothing in `infra/terraform/`
-is modified. When you deploy, `./deploy.sh` copies the overlay files over the base files.
+Most changes are overlay files in `data-stacks/kafka-on-eks/`, which `./deploy.sh` copies over the
+base files when you deploy. The one exception is `infra/terraform/`, which gained `enable_*`
+toggles for optional shared components. They default to `true`, so every other stack behaves
+exactly as before. See [Base infrastructure changes](#base-infrastructure-changes).
 
 ## Contents
 
@@ -53,6 +55,7 @@ The inputs are declared in `terraform/benchmark-variables.tf`.
 | `benchmark_kafka_admin_username` | `admin` | SCRAM user for the external listener. |
 | `benchmark_kafka_admin_password` | `null` | **Never put this in tfvars.** Export `TF_VAR_benchmark_kafka_admin_password`. When it's `null`, no user is created. |
 | `managed_node_groups.core_node_group` | 3× `m5.large` | System node group. It replaces the base `core_node_group` entirely. |
+| `enable_*` component toggles | base: `true`; this stack: `false` | Skip components Kafka doesn't need. See [Removed components](#removed-components). |
 
 Terraform derives the remaining values:
 
@@ -88,6 +91,17 @@ runs and `cleanup.sh` use it to find tagged resources. Don't commit it.
 Terraform creates the Kafka cluster, its node pools and the SCRAM user. Nothing needs a manual
 `kubectl apply`. To change the cluster, edit the files under `terraform/manifests/` and run
 `./deploy.sh` again.
+
+> **Turning components off in a running cluster:** ArgoCD Applications created before the
+> `resources-finalizer` was added don't cascade-delete. Add the finalizer before running `./deploy.sh`:
+> ```bash
+> for a in cert-manager clickhouse-operator; do
+>   kubectl patch application $a -n argocd --type merge \
+>     -p '{"metadata":{"finalizers":["resources-finalizer.argocd.argoproj.io"]}}'
+> done
+> ```
+> Run `terraform plan -var-file=../data-stack.tfvars` in `terraform/_local` first. Only the toggled
+> components should show as destroyed.
 
 > **Migrating a cluster deployed from an earlier commit of this branch:** at first the Kafka CR and
 > the `admin` KafkaUser were applied by hand. When Terraform first manages them, it adopts the
@@ -125,14 +139,42 @@ All paths are relative to `data-stacks/kafka-on-eks/`.
 
 ### Removed components
 
-These base files are overridden with empty files, so the components aren't deployed:
-`trino.tf`, `polaris.tf` (it references Trino), `spark-operator.tf`, `spark-history-server.tf`,
-`flink.tf`, `argo-workflows.tf`, `argo-events.tf`, `k8s-scheduler.tf` (YuniKorn). JupyterHub and
-ingress-nginx are disabled through tfvars.
+These components aren't deployed in this stack. Each one is switched off with an `enable_*`
+toggle in `terraform/data-stack.tfvars`:
 
-ArgoCD, Karpenter, kube-prometheus-stack, cert-manager, KEDA, Fluent Bit, ClickHouse and the
-event collector are kept. They install the Strimzi operator and monitoring, or they're
-referenced by other base files. None of them run on broker or controller nodes.
+| Toggle (`= false`) | Component | Why it's not needed |
+|---|---|---|
+| `enable_event_logging` | ClickHouse operator, ClickHouse event-store + Keeper, event-collector Fluent Bit | Spark-oriented log and event store. It ran on an `r8g.4xlarge` (~$1.13/h). |
+| `enable_aws_for_fluentbit` | aws-for-fluent-bit DaemonSet | It only tails system and Spark pod logs, never Kafka. |
+| `enable_cert_manager` | cert-manager | Only the ClickHouse operator used it. Strimzi has its own CA. |
+| `enable_keda` | KEDA | Only Trino and StarRocks use it. |
+| `enable_data_teams` | Spark/Flink/Ray team namespaces, RBAC, Pod Identity roles | No data teams here. |
+| `enable_trino` | Trino (+ S3 buckets, IAM) | Not used. |
+| `enable_spark_operator`, `enable_spark_history_server` | Spark operator, Spark History Server | Not used. |
+| `enable_flink_operator` | Flink operator | Not used. |
+| `enable_argo_workflows`, `enable_argo_events` | Argo Workflows / Events | Not used. |
+| `enable_yunikorn` | YuniKorn scheduler | Not used. |
+| `enable_jupyterhub`, `enable_ingress_nginx` | JupyterHub, ingress-nginx | Not used (toggles that already existed). |
+
+ArgoCD, Karpenter, the AWS Load Balancer Controller, local-static-provisioner, the EBS CSI driver
+and kube-prometheus-stack stay: Kafka needs them. The S3 buckets and the Glue database stay too,
+because other base files reference them and they cost almost nothing.
+
+### Base infrastructure changes
+
+`infra/terraform/` changes, shared by all stacks and backward compatible:
+
+| File | Change |
+|---|---|
+| `variables.tf` | New toggles: `enable_event_logging`, `enable_aws_for_fluentbit`, `enable_cert_manager`, `enable_keda`, `enable_data_teams`, `enable_trino`, `enable_spark_operator`, `enable_spark_history_server`, `enable_flink_operator`, `enable_argo_workflows`, `enable_argo_events`, `enable_yunikorn`. All default to `true`. |
+| `event-collector.tf`, `clickhouse.tf`, `aws-for-fluentbit.tf`, `cert-manager.tf`, `keda.tf`, `trino.tf`, `spark-operator.tf`, `spark-history-server.tf`, `argo-workflows.tf`, `argo-events.tf`, `k8s-scheduler.tf` | Resources gated by `count`/`for_each`. `moved` blocks keep existing state addresses, so stacks already deployed see no replacement. `random_password.clickhouse` stays unconditional, because the Grafana ClickHouse datasource references it. |
+| `teams.tf` | Team Kubernetes objects and Pod Identity roles gated by `enable_data_teams`. The IAM policies stay, because JupyterHub and Karpenter reference them. |
+| `flink.tf` | `count = enable_flink_operator && !enable_emr_on_eks`. |
+| `polaris.tf` | The Trino-side Polaris resources also require `enable_trino`. |
+| `argocd-applications/{cert-manager,clickhouse-operator,flink-operator,argo-workflows,argo-events}.yaml` | Added ArgoCD's `resources-finalizer`, so deleting the Application also deletes its workloads instead of orphaning them. |
+
+Toggle dependencies: `enable_raydata` requires `enable_data_teams`. Polaris's Trino integration
+requires `enable_trino`. ClickHouse needs `enable_cert_manager` when `enable_event_logging` is on.
 
 ### Monitoring
 
@@ -389,8 +431,8 @@ Redpanda Console with the same SCRAM and CA settings as the clients.
 - **Topic settings:** use identical topic settings in both systems (partitions, RF=3,
   `min.insync.replicas=2`, producer `acks=all`).
 - **Controllers:** the 3 controller nodes are Kafka-only overhead. Report them alongside the results.
-- **Logs:** Fluent Bit doesn't tolerate the benchmark taints, so broker and controller logs are
-  only available through `kubectl logs`.
+- **Logs:** no log shipper collects Kafka logs (aws-for-fluent-bit is disabled, and even when
+  enabled it only tails system and Spark pods). Use `kubectl logs`.
 
 ## Tuning guide
 
@@ -423,6 +465,7 @@ Constraints to keep in mind:
 | Client connection hangs | Check that the client is in `benchmark_peer_vpc_id`, that the peering is active and that the peer route table has the secondary CIDR → `pcx-...`. Hosts in another VPC peered with the client VPC (e.g. a bastion in the Redpanda BYOC VPC) can't reach Strimzi, because peering isn't transitive and the BYOC VPC's CIDR overlaps. |
 | Commands work but feel slow / sporadic timeouts | Check the per-broker NLBs: `aws elbv2 describe-load-balancers` should show a single subnet (`benchmark_zone`, `100.64.x`) and `ip` targets. If they span 3 AZs with `instance` targets, the `perPodService` annotations are missing. Their `10.0.x` IPs then route to the BYOC VPC from the client VPC, and traffic hops through NodePorts. See [Changing NLB settings](#changing-nlb-settings). |
 | `rpk cluster health` hangs | It calls the Redpanda Admin API on port 9644. The NLBs only listen on 9094, so the connection silently times out. Expected with Kafka. |
+| After switching a toggle off, the component's pods keep running | Its ArgoCD Application had no `resources-finalizer`, so the workloads were orphaned. Patch the finalizer onto it before the deploy (see below), or delete the leftover resources by hand. |
 | Lists brokers, then hangs | That broker's NLB targets are still registering. Wait 1–2 minutes. `kubectl get svc -n kafka` shows all 4 `external` services with hostnames when they're ready. |
 | `SASL authentication failed` | Check `user`, `pass` and `sasl.mechanism=SCRAM-SHA-512`. `kubectl get kafkauser admin -n kafka` must show `READY=True`, and Terraform must have run with `TF_VAR_benchmark_kafka_admin_password` set. |
 | TLS `certificate signed by unknown authority` | `tls.ca` / `ssl.truststore.location` must point to the exported `strimzi-ca.crt`. |

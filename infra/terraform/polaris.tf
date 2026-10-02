@@ -318,14 +318,14 @@ resource "kubectl_manifest" "polaris_catalog_create" {
 #    variable) and consumed via Trino's chart-level envFrom.
 #---------------------------------------------------------------
 resource "aws_iam_role_policy_attachment" "trino_polaris_warehouse" {
-  count = var.enable_polaris ? 1 : 0
+  count = var.enable_polaris && var.enable_trino ? 1 : 0
 
-  role       = module.trino_pod_identity.iam_role_name
+  role       = module.trino_pod_identity[0].iam_role_name
   policy_arn = aws_iam_policy.polaris_warehouse[0].arn
 }
 
 resource "kubernetes_secret" "trino_polaris_credentials" {
-  count = var.enable_polaris ? 1 : 0
+  count = var.enable_polaris && var.enable_trino ? 1 : 0
 
   metadata {
     name      = "trino-polaris-credentials"

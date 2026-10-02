@@ -70,7 +70,7 @@ module "team_pod_identity" {
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.0"
 
-  for_each = local.teams
+  for_each = var.enable_data_teams ? local.teams : {}
 
   name = each.value.name
 
@@ -94,7 +94,7 @@ module "team_pod_identity" {
 # Kubernetes Resources for Teams
 #---------------------------------------------------------------
 resource "kubectl_manifest" "team_namespaces" {
-  for_each = local.teams
+  for_each = var.enable_data_teams ? local.teams : {}
 
   yaml_body = templatefile("${path.module}/manifests/teams/namespace.yaml", {
     namespace = each.value.namespace
@@ -103,7 +103,7 @@ resource "kubectl_manifest" "team_namespaces" {
 }
 
 resource "kubectl_manifest" "team_service_accounts" {
-  for_each = local.teams
+  for_each = var.enable_data_teams ? local.teams : {}
 
   yaml_body = templatefile("${path.module}/manifests/teams/service-account.yaml", {
     service_account = each.value.service_account
@@ -118,11 +118,13 @@ resource "kubectl_manifest" "team_service_accounts" {
 }
 
 resource "kubectl_manifest" "team_cluster_role" {
+  count = var.enable_data_teams ? 1 : 0
+
   yaml_body = file("${path.module}/manifests/teams/cluster-role.yaml")
 }
 
 resource "kubectl_manifest" "team_cluster_role_bindings" {
-  for_each = local.teams
+  for_each = var.enable_data_teams ? local.teams : {}
 
   yaml_body = templatefile("${path.module}/manifests/teams/cluster-role-binding.yaml", {
     team_name       = each.value.name
@@ -373,6 +375,8 @@ resource "aws_iam_policy" "s3tables" {
 # Flink-specific RBAC
 #---------------------------------------------------------------
 resource "kubectl_manifest" "flink_role" {
+  count = var.enable_data_teams ? 1 : 0
+
   yaml_body = templatefile("${path.module}/manifests/flink/role.yaml", {
     team_name = "flink-team-a"
     namespace = "flink-team-a"
@@ -382,6 +386,8 @@ resource "kubectl_manifest" "flink_role" {
 }
 
 resource "kubectl_manifest" "flink_rolebinding" {
+  count = var.enable_data_teams ? 1 : 0
+
   yaml_body = templatefile("${path.module}/manifests/flink/rolebinding.yaml", {
     team_name       = "flink-team-a"
     namespace       = "flink-team-a"
@@ -392,4 +398,20 @@ resource "kubectl_manifest" "flink_rolebinding" {
     kubectl_manifest.team_service_accounts,
     kubectl_manifest.flink_role
   ]
+}
+
+# Resources became optional (count); keep existing state addresses
+moved {
+  from = kubectl_manifest.team_cluster_role
+  to   = kubectl_manifest.team_cluster_role[0]
+}
+
+moved {
+  from = kubectl_manifest.flink_role
+  to   = kubectl_manifest.flink_role[0]
+}
+
+moved {
+  from = kubectl_manifest.flink_rolebinding
+  to   = kubectl_manifest.flink_rolebinding[0]
 }

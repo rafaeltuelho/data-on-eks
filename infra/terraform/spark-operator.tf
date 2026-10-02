@@ -8,6 +8,8 @@ locals {
 # Spark Operator Application
 #---------------------------------------------------------------
 resource "kubectl_manifest" "spark_operator" {
+  count = var.enable_spark_operator ? 1 : 0
+
   yaml_body = templatefile("${path.module}/argocd-applications/spark-operator.yaml", {
     user_values_yaml = indent(8, yamlencode(local.spark_operator_values))
   })
@@ -16,4 +18,10 @@ resource "kubectl_manifest" "spark_operator" {
     helm_release.argocd,
     module.spark_history_server_irsa,
   ]
+}
+
+# Resources became optional (count); keep existing state addresses
+moved {
+  from = kubectl_manifest.spark_operator
+  to   = kubectl_manifest.spark_operator[0]
 }
