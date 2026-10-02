@@ -337,12 +337,36 @@ hostnames, and the laptop can't reach those.
   *Strimzi Operators*. They're ConfigMaps in `monitoring`, labeled `grafana_dashboard: "1"`. The
   upstream files pointed at a nonexistent `kube-prometheus-stack` namespace; this fork fixes them.
 
-Open Grafana from your workstation. HTTP port-forwarding works fine, unlike Kafka:
+### Accessing Grafana
+
+Grafana isn't exposed outside the cluster. Its Service, `monitoring-grafana`, is `ClusterIP` with no
+load balancer, so open it from your workstation with a port-forward. HTTP port-forwarding works
+fine, unlike Kafka:
+
+```bash
+cd data-stacks/kafka-on-eks && source set-env.sh
+kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80
+# open http://localhost:3000 in your browser; keep the command running while you use Grafana
+```
+
+**Login:** user `admin`. Terraform generates a random password when it deploys the stack
+(`random_password.grafana` in the base `kube-prometheus-stack.tf`) and stores it in the
+`grafana-admin-secret` Secret. A redeploy from scratch generates a new one, so read it from the
+cluster rather than writing it down:
+
 ```bash
 kubectl get secret grafana-admin-secret -n monitoring -o jsonpath='{.data.admin-user}' | base64 -d; echo
 kubectl get secret grafana-admin-secret -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d; echo
-kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80   # http://localhost:3000
 ```
+
+The Strimzi dashboards are under **Dashboards**: *Strimzi Kafka*, *Strimzi Exporter* and
+*Strimzi Operators*.
+
+> To reach Grafana without a port-forward, you'd add a separate `LoadBalancer` Service that selects
+> the Grafana pods (`app.kubernetes.io/name=grafana`, `app.kubernetes.io/instance=monitoring`).
+> From a laptop that means an internet-facing NLB, restricted with `loadBalancerSourceRanges` to
+> your IP/32. That serves the admin login over plain HTTP, so this fork doesn't do it.
+
 
 **Cruise Control isn't a console.** It's a REST service for load monitoring and rebalancing,
 driven through `KafkaRebalance` resources (`terraform/manifests/kafka/rebalance.yaml`). Strimzi
