@@ -1,11 +1,12 @@
 # Benchmark user for the `external` (TLS + SCRAM-SHA-512) listener, mirroring the
-# Redpanda BYOC `admin` user ACLs. The password is NOT stored here; create it first:
-#   kubectl create secret generic admin-password -n kafka --from-literal=password='<password>'
+# Redpanda BYOC `admin` user ACLs. Applied by kafka-benchmark-user.tf when
+# TF_VAR_benchmark_kafka_admin_password is set; the password lives in Secret
+# <username>-password, which Terraform creates from that variable (never in git).
 # Redpanda's Subject / Schema Registry ACLs have no Kafka equivalent (no Schema Registry here).
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaUser
 metadata:
-  name: admin
+  name: ${USERNAME}
   namespace: kafka
   labels:
     strimzi.io/cluster: data-on-eks
@@ -15,7 +16,7 @@ spec:
     password:
       valueFrom:
         secretKeyRef:
-          name: admin-password
+          name: ${PASSWORD_SECRET_NAME}
           key: password
   authorization:
     type: simple

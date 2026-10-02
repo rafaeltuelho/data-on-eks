@@ -9,11 +9,25 @@ deployment_id = "DO-NOT-EDIT-AUTO-GENERATED"
 
 #---------------------------------------------------------------
 # Benchmark flavor: sized to compare against Redpanda BYOC Tier 1
-# (3x m7gd.large brokers + 2x m5.large utility nodes, us-east-2a)
+# (reference: 3x m7gd.large brokers + 2x m5.large utility nodes, single AZ)
 #---------------------------------------------------------------
 
-# Benchmark worker VPC (same clients used against Redpanda BYOC); see vpc-peering-benchmark.tf
+#---------------------------------------------------------------
+# Benchmark inputs (see benchmark-variables.tf and BENCHMARK_CUSTOMIZATION.md)
+# The Kafka user password is NOT set here: export TF_VAR_benchmark_kafka_admin_password
+#---------------------------------------------------------------
+# AZ shared with the Redpanda cluster and the benchmark clients
+benchmark_zone = "us-east-2a"
+
+# Redpanda BYOC Tier 1 broker type (needs local NVMe) and KRaft controller type
+benchmark_broker_instance_type     = "m7gd.large"
+benchmark_controller_instance_type = "m7g.large"
+
+# Benchmark client (worker) VPC to peer with; null disables peering
 benchmark_peer_vpc_id = "vpc-031a34d4639335164"
+
+# SCRAM-SHA-512 user for the external listener
+benchmark_kafka_admin_username = "admin"
 
 # Not needed for the Kafka benchmark
 enable_jupyterhub    = false

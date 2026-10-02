@@ -9,7 +9,7 @@ spec:
   replicas: 3
   roles:
     - broker
-  # Benchmark flavor: one broker per m7gd.large, mirroring Redpanda BYOC Tier 1
+  # Benchmark flavor: one broker per node (var.benchmark_broker_instance_type), mirroring Redpanda BYOC Tier 1
   resources:
     requests:
       cpu: "1"
@@ -21,7 +21,7 @@ spec:
   storage:
     type: jbod
     volumes:
-      # Local NVMe instance store (118 GB on m7gd.large) via local-static-provisioner
+      # Local NVMe instance store (118 GB on m7gd.large; keep size below the device) via local-static-provisioner
       - id: 0
         type: persistent-claim
         class: local-storage

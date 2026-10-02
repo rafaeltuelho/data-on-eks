@@ -1,3 +1,5 @@
+# Applied by Terraform (kafka.tf) as a template: $${VAR} placeholders come from
+# local.benchmark_template_vars (benchmark-variables.tf / data-stack.tfvars).
 apiVersion: kafka.strimzi.io/v1beta2
 kind: Kafka
 metadata:
@@ -20,7 +22,7 @@ spec:
         type: internal
         tls: true
       # Benchmark flavor: internal NLBs (1 bootstrap + 1 per broker) for the benchmark
-      # workers in the peered VPC vpc-031a34d4639335164 (10.100.0.0/16).
+      # clients in the peered VPC (var.benchmark_peer_vpc_id).
       # TLS + SCRAM to match Redpanda BYOC (Strimzi supports SCRAM-SHA-512 only).
       # Clients trust the cluster CA from secret data-on-eks-cluster-ca-cert.
       - name: external
@@ -31,9 +33,9 @@ spec:
           type: scram-sha-512
         configuration:
           class: service.k8s.aws/nlb   # sets Service loadBalancerClass -> AWS Load Balancer Controller
-          loadBalancerSourceRanges:
-            - 10.100.0.0/16
-    # ACLs are enforced (see kafka-user-admin.yaml). ANONYMOUS is a super user so the
+          # Peer (client) VPC CIDR, or this VPC's CIDR when peering is disabled
+          loadBalancerSourceRanges: ${BENCHMARK_CLIENT_CIDRS_JSON}
+    # ACLs are enforced (see ../benchmark/kafka-user.yaml). ANONYMOUS is a super user so the
     # unauthenticated in-cluster `plain`/`tls` listeners keep working (helper.sh, examples).
     authorization:
       type: simple
@@ -46,24 +48,24 @@ spec:
       default.replication.factor: 3
       min.insync.replicas: 2
     # Benchmark flavor (Redpanda BYOC Tier 1): resources, JVM options, storage and
-    # scheduling are defined per KafkaNodePool in terraform/manifests/kafka/node-pool-*.yaml.
+    # scheduling are defined per KafkaNodePool in node-pool-*.yaml (same directory).
     template:
-      # NLB settings for the `external` listener services. NLBs go in the us-east-2a
-      # secondary subnet (100.64.0.0/16): the only range routed from the worker VPC,
-      # whose 10.0.0.0/16 route already points at the Redpanda BYOC VPC.
+      # NLB settings for the `external` listener services. NLBs go in the benchmark AZ's
+      # secondary subnet: the only range routed from the worker VPC, whose 10.0.0.0/16
+      # route may already point at the Redpanda BYOC VPC (see vpc-peering-benchmark.tf).
       externalBootstrapService:
         metadata:
           annotations:
             service.beta.kubernetes.io/aws-load-balancer-scheme: internal
             service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
-            service.beta.kubernetes.io/aws-load-balancer-subnets: kafka-on-eks-private-secondary1-us-east-2a
+            service.beta.kubernetes.io/aws-load-balancer-subnets: ${BENCHMARK_NLB_SUBNET_NAME}
             service.beta.kubernetes.io/aws-load-balancer-attributes: load_balancing.cross_zone.enabled=false
       perPodService:
         metadata:
           annotations:
             service.beta.kubernetes.io/aws-load-balancer-scheme: internal
             service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
-            service.beta.kubernetes.io/aws-load-balancer-subnets: kafka-on-eks-private-secondary1-us-east-2a
+            service.beta.kubernetes.io/aws-load-balancer-subnets: ${BENCHMARK_NLB_SUBNET_NAME}
             service.beta.kubernetes.io/aws-load-balancer-attributes: load_balancing.cross_zone.enabled=false
     metricsConfig:
       type: jmxPrometheusExporter
@@ -71,7 +73,7 @@ spec:
         configMapKeyRef:
           name: kafka-metrics
           key: kafka-metrics-config.yml
-    # rack awareness removed: all brokers run in a single AZ (us-east-2a), like the Redpanda BYOC cluster
+    # rack awareness removed: all brokers run in a single AZ (var.benchmark_zone), like the Redpanda BYOC cluster
   entityOperator:
     topicOperator: {}
     userOperator: {}

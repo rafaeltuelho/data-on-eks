@@ -1,7 +1,7 @@
-# KRaft controllers for the Redpanda BYOC Tier 1 benchmark (m7g.large: m7g.medium caps at 8 pods,
+# KRaft controllers for the Redpanda BYOC Tier 1 benchmark (default m7g.large: m7g.medium caps at 8 pods,
 # which DaemonSets alone nearly fill).
 # Redpanda has no separate metadata nodes, so controllers run on small dedicated
-# nodes and brokers keep their whole m7gd.large. Report these 3 nodes as Kafka overhead.
+# nodes and brokers keep their whole node. Report these 3 nodes as Kafka overhead.
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
@@ -31,10 +31,10 @@ spec:
           values: ["on-demand"]
         - key: node.kubernetes.io/instance-type
           operator: In
-          values: ["m7g.large"]
+          values: ["${BENCHMARK_CONTROLLER_INSTANCE_TYPE}"]
         - key: topology.kubernetes.io/zone
           operator: In
-          values: ["us-east-2a"]
+          values: ["${BENCHMARK_ZONE}"]
   limits:
     cpu: "8"
   disruption:

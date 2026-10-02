@@ -9,7 +9,7 @@ spec:
   replicas: 3
   roles:
     - controller
-  # Benchmark flavor: small dedicated KRaft controllers on m7g.large
+  # Benchmark flavor: small dedicated KRaft controllers (var.benchmark_controller_instance_type)
   resources:
     requests:
       cpu: 250m

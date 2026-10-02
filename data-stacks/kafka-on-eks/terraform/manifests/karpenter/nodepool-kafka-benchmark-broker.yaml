@@ -1,6 +1,6 @@
 # Kafka brokers for the Redpanda BYOC Tier 1 benchmark.
-# Mirrors the BYOC broker hardware: 3x m7gd.large (Graviton3, 2 vCPU, 8 GiB, 1x 118 GB NVMe),
-# on-demand, single AZ (us-east-2a). Uses the kafka-benchmark-broker-nvme EC2NodeClass so the local static
+# Mirrors the BYOC broker hardware (default m7gd.large: Graviton3, 2 vCPU, 8 GiB, 1x 118 GB NVMe),
+# on-demand, single AZ (var.benchmark_zone). Uses the kafka-benchmark-broker-nvme EC2NodeClass so the local static
 # provisioner exposes the instance store as the `local-storage` StorageClass.
 apiVersion: karpenter.sh/v1
 kind: NodePool
@@ -35,11 +35,11 @@ spec:
           values: ["on-demand"]
         - key: node.kubernetes.io/instance-type
           operator: In
-          values: ["m7gd.large"]
-        # Same AZ as the Redpanda BYOC cluster (same account, so same physical AZ)
+          values: ["${BENCHMARK_BROKER_INSTANCE_TYPE}"]
+        # Same AZ as the Redpanda BYOC cluster (var.benchmark_zone)
         - key: topology.kubernetes.io/zone
           operator: In
-          values: ["us-east-2a"]
+          values: ["${BENCHMARK_ZONE}"]
   limits:
     cpu: "8"
   disruption:

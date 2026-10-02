@@ -5,7 +5,8 @@ set -e
 # --- Configuration ---
 STACKS="kafka-on-eks"
 TERRAFORM_DIR="terraform"
-AWS_REGION="${AWS_REGION:-us-east-2}"
+# Region defaults to `region` in terraform/data-stack.tfvars
+AWS_REGION="${AWS_REGION:-$(sed -nE 's/^[[:space:]]*region[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$TERRAFORM_DIR/data-stack.tfvars")}"
 KUBECONFIG_FILE="kubeconfig.yaml"
 
 

@@ -1,3 +1,11 @@
+> [!IMPORTANT]
+> **This is a fork of [awslabs/data-on-eks](https://github.com/awslabs/data-on-eks).** It was modified to
+> benchmark a Strimzi Kafka cluster against a **Redpanda BYOC Tier 1** cluster. The `kafka-on-eks` stack
+> is resized and reconfigured to match Redpanda BYOC Tier 1: same broker instances, single AZ,
+> local NVMe, VPC peering to the benchmark clients, and internal NLBs with TLS + SCRAM.
+> See **[BENCHMARK_CUSTOMIZATION.md](BENCHMARK_CUSTOMIZATION.md)** for every change, the configuration
+> inputs, the deploy steps and the network setup.
+
 ![Data on EKS](website/static/img/doeks-logo-green.png)
 # [Data on Amazon EKS (DoEKS)](https://awslabs.github.io/data-on-eks/)
 _(Pronounced: "Do.eks")_

@@ -1,23 +1,12 @@
 #---------------------------------------------------------------
-# Benchmark flavor: VPC peering to the benchmark worker VPC
+# Benchmark flavor: VPC peering to the benchmark client (worker) VPC
 #
-# The worker VPC is already peered with the Redpanda BYOC VPC, which uses the
-# same 10.0.0.0/16 as this VPC's primary CIDR. To avoid a route conflict on the
-# worker side, only this VPC's us-east-2a secondary CIDR (where the brokers and
+# The worker VPC may already be peered with the Redpanda BYOC VPC, which can use
+# the same 10.0.0.0/16 as this VPC's primary CIDR. To avoid a route conflict on
+# the worker side, only the benchmark AZ's secondary CIDR (where the brokers and
 # their internal NLBs live) is routed from the worker VPC.
+# Inputs: var.benchmark_peer_vpc_id, var.benchmark_zone (benchmark-variables.tf)
 #---------------------------------------------------------------
-
-variable "benchmark_peer_vpc_id" {
-  description = "VPC ID of the benchmark worker VPC to peer with. Set to null to disable peering."
-  type        = string
-  default     = null
-}
-
-variable "benchmark_routed_cidr" {
-  description = "CIDR of this VPC routed from the worker VPC (must contain the Kafka NLBs and broker pods)"
-  type        = string
-  default     = "100.64.0.0/16"
-}
 
 data "aws_vpc" "benchmark_peer" {
   count = var.benchmark_peer_vpc_id == null ? 0 : 1
@@ -48,11 +37,11 @@ resource "aws_route" "kafka_to_benchmark_peer" {
   vpc_peering_connection_id = aws_vpc_peering_connection.benchmark_peer[0].id
 }
 
-# Worker VPC -> this VPC (secondary CIDR only; removed again on destroy)
+# Worker VPC -> this VPC (benchmark AZ secondary CIDR only; removed again on destroy)
 resource "aws_route" "benchmark_peer_to_kafka" {
   count                     = var.benchmark_peer_vpc_id == null ? 0 : length(data.aws_route_tables.benchmark_peer[0].ids)
   route_table_id            = data.aws_route_tables.benchmark_peer[0].ids[count.index]
-  destination_cidr_block    = var.benchmark_routed_cidr
+  destination_cidr_block    = local.benchmark_secondary_cidr
   vpc_peering_connection_id = aws_vpc_peering_connection.benchmark_peer[0].id
 }
 
