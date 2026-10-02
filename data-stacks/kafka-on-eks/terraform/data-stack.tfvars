@@ -23,8 +23,10 @@ benchmark_zone = "us-east-2a"
 benchmark_broker_instance_type     = "m7gd.large"
 benchmark_controller_instance_type = "m7g.large"
 
-# Benchmark client (worker) VPC to peer with; null disables peering
-benchmark_peer_vpc_id = "vpc-031a34d4639335164"
+# Optional VPC peering to the benchmark client (worker) VPC; null (default) creates no peering.
+# Set it to the client VPC ID to peer, e.g. benchmark_peer_vpc_id = "vpc-0123456789abcdef0".
+# See "Network setup: VPC peering" in BENCHMARK_CUSTOMIZATION.md before enabling it.
+benchmark_peer_vpc_id = null
 
 # SCRAM-SHA-512 user for the external listener
 benchmark_kafka_admin_username = "admin"

@@ -89,7 +89,7 @@ The inputs are declared in `terraform/benchmark-variables.tf`.
 | `benchmark_zone` | `us-east-2a` | AZ for brokers, controllers and NLBs. Use the AZ of the Redpanda cluster and the benchmark clients, and check that it's the same physical AZ (same AZ ID). It must be one of the first 3 AZs in the region. |
 | `benchmark_broker_instance_type` | `m7gd.large` | Broker instance type. It must have local NVMe. |
 | `benchmark_controller_instance_type` | `m7g.large` | KRaft controller instance type. |
-| `benchmark_peer_vpc_id` | `null` | VPC of the benchmark clients. `null` disables peering, and the NLBs then accept only this VPC's CIDR. |
+| `benchmark_peer_vpc_id` | `null` | **Optional.** VPC of the benchmark clients to peer with. `null` (the committed default) creates no peering, and the NLBs then accept only this VPC's CIDR. See [Network setup: VPC peering](#network-setup-vpc-peering). |
 | `benchmark_kafka_admin_username` | `admin` | SCRAM user for the external listener. |
 | `benchmark_kafka_admin_password` | `null` | **Never put this in tfvars.** Export `TF_VAR_benchmark_kafka_admin_password`. When it's `null`, no user is created. |
 | `managed_node_groups.core_node_group` | 3× `m5.large` | System node group. It replaces the base `core_node_group` entirely. |
@@ -240,6 +240,20 @@ requires `enable_trino`. ClickHouse needs `enable_cert_manager` when `enable_eve
 | `deploy.sh`, `set-env.sh` | The region is read from tfvars. |
 
 ## Network setup: VPC peering
+
+> **Peering is optional and off by default** (`benchmark_peer_vpc_id = null`). Decide based on
+> where your benchmark clients run:
+>
+> | Clients run in… | Set `benchmark_peer_vpc_id` to | Result |
+> |---|---|---|
+> | Pods in this EKS cluster | `null` | No peering. Clients use the in-cluster bootstrap `data-on-eks-kafka-bootstrap.kafka.svc:9092/9093`, or the NLBs from inside this VPC. |
+> | EC2 instances in **another VPC** (e.g. the clients you used against Redpanda) | that VPC's ID | Terraform creates the peering plus the routes on both sides, and the NLBs accept that VPC's CIDR. |
+> | Another account or region | `null` | Not supported by this file, which auto-accepts within one account and region. Peer manually, or use Transit Gateway or PrivateLink. |
+>
+> Before enabling it, check that the peer VPC's CIDR doesn't overlap any of this VPC's CIDRs
+> (`vpc_cidr`, `secondary_cidrs`). Turning it off later (back to `null`) removes the peering and
+> its routes on the next `./deploy.sh`.
+
 
 ```
  benchmark client VPC (benchmark_peer_vpc_id)         Strimzi VPC (this stack)
