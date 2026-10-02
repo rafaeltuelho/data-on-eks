@@ -13,5 +13,9 @@ spec:
     matchNames:
       - kafka
   podMetricsEndpoints:
+  # Strimzi >= 1.1.0 renamed the entity-operator ports: healthcheck-to (topic operator)
+  # and healthcheck-uo (user operator)
   - path: /metrics
-    port: healthcheck
+    port: healthcheck-to
+  - path: /metrics
+    port: healthcheck-uo

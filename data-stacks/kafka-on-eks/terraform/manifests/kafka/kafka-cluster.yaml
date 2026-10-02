@@ -1,17 +1,15 @@
 # Applied by Terraform (kafka.tf) as a template: $${VAR} placeholders come from
 # local.benchmark_template_vars (benchmark-variables.tf / data-stack.tfvars).
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: Kafka
 metadata:
   name: data-on-eks
   namespace: kafka
-  annotations:
-    strimzi.io/kraft: enabled
-    strimzi.io/node-pools: enabled
 spec:
   kafka:
-    version: 3.9.0
-    metadataVersion: 3.9-IV0
+    # Strimzi 1.2.0 supports Kafka 4.2.0, 4.2.1, 4.3.0 and 4.3.1 (default)
+    version: 4.3.1
+    metadataVersion: 4.3-IV0
     listeners:
       - name: plain
         port: 9092

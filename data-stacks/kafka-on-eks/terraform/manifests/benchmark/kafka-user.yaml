@@ -3,7 +3,7 @@
 # TF_VAR_benchmark_kafka_admin_password is set; the password lives in Secret
 # <username>-password, which Terraform creates from that variable (never in git).
 # Redpanda's Subject / Schema Registry ACLs have no Kafka equivalent (no Schema Registry here).
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaUser
 metadata:
   name: ${USERNAME}

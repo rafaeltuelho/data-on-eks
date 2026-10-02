@@ -13,6 +13,7 @@ exactly as before. See [Base infrastructure changes](#base-infrastructure-change
 ## Contents
 
 - [Target sizing](#target-sizing)
+- [Versions](#versions)
 - [Configuration (tfvars)](#configuration-tfvars)
 - [Deploy](#deploy)
 - [Change log](#change-log)
@@ -39,6 +40,43 @@ Redpanda BYOC Tier 1 is rated for 20 MB/s ingress, 60 MB/s egress, 2,000 partiti
 | System / utility nodes | 2× `m5.large` | 3× `m5.large` (runs ArgoCD, Karpenter, Prometheus, Strimzi operator) |
 | AZ | Single AZ | Single AZ (`benchmark_zone`) |
 | Client access | Peered VPC, TLS + SASL/SCRAM | Peered VPC, internal NLBs, TLS + SASL/SCRAM-SHA-512 |
+
+## Versions
+
+| Component | Version | Where |
+|---|---|---|
+| Strimzi operator | **1.2.0** | `terraform/argocd-applications/strimzi-kafka-operator.yaml` (overrides base 0.47.0) |
+| Apache Kafka | **4.3.1**, metadata `4.3-IV0` (KRaft) | `spec.kafka.version` in `terraform/manifests/kafka/kafka-cluster.yaml` |
+| Strimzi CRD API | `kafka.strimzi.io/v1` | All Strimzi manifests. Strimzi 1.0 removed `v1beta2`. |
+
+Strimzi 1.2.0 supports Kafka 4.2.0, 4.2.1, 4.3.0 and 4.3.1. The base stack (`infra/terraform`)
+stays on Strimzi 0.47.0 / `v1beta2`, so other stacks are unaffected.
+
+### Upgrading an existing cluster (0.47.0 / Kafka 3.9 → 1.2.0 / Kafka 4.3.1)
+
+There's no supported in-place path that keeps the cluster. Strimzi 1.x serves only the `v1` API,
+and CRDs that still list `v1beta2` as a stored version can't drop it without Strimzi's conversion
+tooling (0.49–0.51). A benchmark cluster holds no data worth migrating, so redeploy from scratch:
+
+```bash
+cd data-stacks/kafka-on-eks && source set-env.sh
+./cleanup.sh                                   # ~20+ min; removes everything, including the peering
+read -rs TF_VAR_benchmark_kafka_admin_password && export TF_VAR_benchmark_kafka_admin_password
+./deploy.sh                                    # ~30+ min
+```
+
+After the redeploy, the clients need updating. There's a **new cluster CA** and **new NLB
+hostnames**: export `strimzi-ca.crt` again, and point the rpk profile at the new bootstrap address
+(`rpk profile set brokers=<new-bootstrap-nlb>:9094`). The peering, user and password are recreated
+from tfvars and `TF_VAR_benchmark_kafka_admin_password`.
+
+Other changes that come with 1.x:
+
+- **Entity operator metrics ports:** renamed to `healthcheck-to` and `healthcheck-uo` (Strimzi 1.1.0).
+  `monitoring-manifests/podmonitor-entity-operator-metrics.yaml` scrapes both.
+- **Security context:** the operator Helm chart defaults to the Restricted Pod Security Standard (1.2.0).
+- **Kafka 4.x clients:** clients must be recent enough. Kafka 4.0 dropped very old client protocol
+  versions, so use a current Kafka client library in OpenMessaging Benchmark.
 
 ## Configuration (tfvars)
 
@@ -128,7 +166,9 @@ All paths are relative to `data-stacks/kafka-on-eks/`.
 
 | File | Change |
 |---|---|
-| `terraform/manifests/kafka/kafka-cluster.yaml` | Moved from `kafka-cluster/` and now applied by Terraform as a template. Changes: resources, JVM options, storage and placement moved to the node pools; rack awareness removed (single AZ); `external` listener added (NLB, TLS, SCRAM-SHA-512); simple authorization with `ANONYMOUS` as a super user, so the in-cluster `plain`/`tls` listeners still work. |
+| `terraform/argocd-applications/strimzi-kafka-operator.yaml` | A copy of the base file with `targetRevision: 1.2.0` instead of 0.47.0. |
+| All Strimzi manifests | `apiVersion: kafka.strimzi.io/v1`. The obsolete `strimzi.io/kraft` / `strimzi.io/node-pools` annotations are removed. |
+| `terraform/manifests/kafka/kafka-cluster.yaml` | Kafka `4.3.1`, metadata `4.3-IV0`. Moved from `kafka-cluster/` and now applied by Terraform as a template. Changes: resources, JVM options, storage and placement moved to the node pools; rack awareness removed (single AZ); `external` listener added (NLB, TLS, SCRAM-SHA-512); simple authorization with `ANONYMOUS` as a super user, so the in-cluster `plain`/`tls` listeners still work. |
 | `terraform/manifests/kafka/node-pool-broker.yaml` | Per-broker NLB annotations (`template.perPodService`). 3 brokers. Requests 1 CPU / 5Gi, no limits (like Redpanda, the broker can use the whole node, including page cache). Heap `-Xms/-Xmx 2g`. 100Gi `local-storage` volume. Pinned to `kafka-benchmark-broker`, one per node. Pods carry `karpenter.sh/do-not-disrupt`. |
 | `terraform/manifests/kafka/node-pool-controller.yaml` | 3 controllers. Requests 250m / 1536Mi, memory limit 2Gi, heap 768m. 20Gi gp3 volume. Pinned to `kafka-benchmark-controller`. |
 | `terraform/manifests/kafka/rebalance.yaml` | `RackAwareGoal` removed, because one rack can't satisfy RF=3. |
@@ -183,6 +223,7 @@ requires `enable_trino`. ClickHouse needs `enable_cert_manager` when `enable_eve
 |---|---|
 | `terraform/kafka-benchmark-monitoring.tf` | **New.** Applies `monitoring-manifests/` (PodMonitors + Strimzi Grafana dashboards). |
 | `monitoring-manifests/grafana-strimzi-*.yaml` | Dashboard ConfigMaps moved to the `monitoring` namespace, where Grafana runs. |
+| `monitoring-manifests/podmonitor-entity-operator-metrics.yaml` | Scrapes the Strimzi ≥ 1.1 port names `healthcheck-to` and `healthcheck-uo`. |
 
 ### Networking
 
@@ -364,7 +405,7 @@ The internal listeners need no auth and are only reachable inside the cluster:
 `data-on-eks-kafka-bootstrap.kafka.svc:9092` (plain) and `:9093` (TLS). To get a throwaway client:
 ```bash
 kubectl run kafka-client -n kafka -it --rm --restart=Never \
-  --image=quay.io/strimzi/kafka:0.47.0-kafka-3.9.0 -- \
+  --image=quay.io/strimzi/kafka:1.2.0-kafka-4.3.1 -- \
   bin/kafka-broker-api-versions.sh --bootstrap-server data-on-eks-kafka-bootstrap:9092
 ```
 `kubectl port-forward` from a laptop doesn't work. The brokers advertise in-cluster or NLB
@@ -471,7 +512,7 @@ Constraints to keep in mind:
 | Lists brokers, then hangs | That broker's NLB targets are still registering. Wait 1–2 minutes. `kubectl get svc -n kafka` shows all 4 `external` services with hostnames when they're ready. |
 | `SASL authentication failed` | Check `user`, `pass` and `sasl.mechanism=SCRAM-SHA-512`. `kubectl get kafkauser admin -n kafka` must show `READY=True`, and Terraform must have run with `TF_VAR_benchmark_kafka_admin_password` set. |
 | TLS `certificate signed by unknown authority` | `tls.ca` / `ssl.truststore.location` must point to the exported `strimzi-ca.crt`. |
-| `unknown field ...` when applying a Strimzi resource | Check the field against the Strimzi 0.47 CRDs. For example, the load balancer class is `configuration.class`. `kubectl apply --dry-run=server -f <file>` validates without applying. |
+| `unknown field ...` when applying a Strimzi resource | Check the field against the Strimzi 1.2.0 CRDs (`kafka.strimzi.io/v1`). For example, the load balancer class is `configuration.class`. `kubectl apply --dry-run=server -f <file>` validates without applying. |
 | Brokers `Pending` | `kubectl get nodeclaims -o wide`, plus the logs of the `local-static-provisioner` pods in `kube-system` on the broker nodes. `kubectl get pv` should show one `local-storage` PV per broker node. |
 
 ## Cleanup

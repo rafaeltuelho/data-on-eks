@@ -1,5 +1,5 @@
 # Benchmark flavor: RackAwareGoal removed — all brokers are in one AZ (one rack), so it can never be satisfied with RF=3.
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaRebalance
 metadata:
   name: my-rebalance
