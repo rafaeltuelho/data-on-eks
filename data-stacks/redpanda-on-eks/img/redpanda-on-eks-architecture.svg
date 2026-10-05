@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1460" height="900" viewBox="0 0 1460 900" font-family="'Futura', 'Avenir Next', 'Century Gothic', 'Trebuchet MS', sans-serif">
+  <title>Redpanda on EKS deployment</title>
+  <defs>
+    <!-- Hand-drawn look: slight wobble on shapes (not on text) -->
+    <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="2" seed="7" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.6" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <!-- Redpanda cluster hatch -->
+    <pattern id="hatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+      <rect width="14" height="14" fill="#FDEEEB"/>
+      <line x1="0" y1="0" x2="0" y2="14" stroke="#F5B9AF" stroke-width="2"/>
+    </pattern>
+    <pattern id="hatch-gray" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+      <rect width="14" height="14" fill="#F5F7F9"/>
+      <line x1="0" y1="0" x2="0" y2="14" stroke="#DDE2E8" stroke-width="2"/>
+    </pattern>
+    <!-- Open arrowhead, as in the Redpanda docs diagrams -->
+    <marker id="arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#fff" stroke="#111" stroke-width="1.8" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#fff" stroke="#E5432B" stroke-width="1.8" stroke-linejoin="round"/>
+    </marker>
+    <!-- Broker: outlined box with red partition squares -->
+    <g id="broker">
+      <rect x="0" y="0" width="190" height="46" rx="4" fill="#fff" stroke="#111" stroke-width="2.4"/>
+      <rect x="15" y="12" width="22" height="22" fill="#E5432B"/>
+      <rect x="49" y="12" width="22" height="22" fill="#E5432B"/>
+      <rect x="83" y="12" width="22" height="22" fill="#E5432B"/>
+      <rect x="117" y="12" width="22" height="22" fill="#E5432B"/>
+      <rect x="151" y="12" width="22" height="22" fill="#E5432B"/>
+    </g>
+  </defs>
+
+  <rect width="1460" height="900" fill="#fff"/>
+
+  <!-- ===================== Shapes (sketchy) ===================== -->
+  <g filter="url(#rough)">
+    <!-- VPC -->
+    <rect x="290" y="64" width="880" height="806" rx="6" fill="none" stroke="#6B7684" stroke-width="2" stroke-dasharray="10 7"/>
+    <!-- EKS cluster -->
+    <rect x="565" y="104" width="585" height="746" rx="6" fill="none" stroke="#111" stroke-width="2" stroke-dasharray="4 6"/>
+    <!-- Redpanda cluster -->
+    <rect x="595" y="158" width="525" height="370" fill="url(#hatch)" stroke="#E5432B" stroke-width="2.6" stroke-dasharray="11 8"/>
+    <!-- Core node group -->
+    <rect x="595" y="590" width="525" height="230" rx="6" fill="#fff" stroke="#111" stroke-width="2"/>
+
+    <!-- Clients (gray bars) -->
+    <rect x="40" y="226" width="200" height="26" fill="#ACB6C2"/>
+    <rect x="40" y="326" width="200" height="26" fill="#ACB6C2"/>
+    <rect x="40" y="426" width="200" height="26" fill="#ACB6C2"/>
+
+    <!-- Route 53 private zone -->
+    <rect x="302" y="92" width="246" height="76" rx="30" fill="#fff" stroke="#111" stroke-width="2"/>
+
+
+    <!-- Brokers -->
+    <use href="#broker" x="625" y="215"/>
+    <use href="#broker" x="895" y="315"/>
+    <use href="#broker" x="625" y="415"/>
+
+    <!-- Platform components -->
+    <rect x="620" y="636" width="148" height="40" rx="20" fill="#FDEEEB" stroke="#E5432B" stroke-width="2"/>
+    <rect x="785" y="636" width="148" height="40" rx="20" fill="#FDEEEB" stroke="#E5432B" stroke-width="2"/>
+    <rect x="950" y="636" width="148" height="40" rx="20" fill="#fff" stroke="#E5432B" stroke-width="2" stroke-dasharray="6 5"/>
+    <rect x="620" y="692" width="148" height="40" rx="20" fill="#fff" stroke="#111" stroke-width="2"/>
+    <rect x="785" y="692" width="148" height="40" rx="20" fill="#fff" stroke="#111" stroke-width="2"/>
+    <rect x="950" y="692" width="148" height="40" rx="20" fill="#fff" stroke="#111" stroke-width="2"/>
+    <rect x="620" y="748" width="148" height="40" rx="20" fill="#fff" stroke="#111" stroke-width="2"/>
+    <rect x="785" y="748" width="148" height="40" rx="20" fill="#fff" stroke="#111" stroke-width="2"/>
+    <rect x="950" y="748" width="148" height="40" rx="20" fill="#fff" stroke="#111" stroke-width="2"/>
+
+    <!-- S3 bucket (Tiered Storage) -->
+    <path d="M1222,318 L1410,318 L1392,462 Q1316,480 1240,462 Z" fill="url(#hatch-gray)" stroke="#111" stroke-width="2.2" stroke-dasharray="8 6"/>
+    <ellipse cx="1316" cy="318" rx="94" ry="16" fill="#fff" stroke="#111" stroke-width="2.2"/>
+
+    <!-- You (operator laptop) -->
+    <rect x="40" y="726" width="200" height="26" fill="#ACB6C2"/>
+
+    <!-- ===== Arrows ===== -->
+    <!-- clients -> brokers (NodePort, TLS + SASL/SCRAM) -->
+    <path d="M246,239 L617,238" fill="none" stroke="#111" stroke-width="2.2" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+    <path d="M246,339 L887,338" fill="none" stroke="#111" stroke-width="2.2" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+    <path d="M246,439 L617,438" fill="none" stroke="#111" stroke-width="2.2" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+    <!-- clients -> Route 53 (DNS) -->
+    <path d="M200,222 C210,160 250,131 294,131" fill="none" stroke="#6B7684" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+    <!-- brokers publish their node IP to Route 53 -->
+    <path d="M650,206 C640,160 600,131 556,131" fill="none" stroke="#E5432B" stroke-width="2.2" stroke-dasharray="7 6" marker-end="url(#arrow-red)"/>
+    <!-- brokers -> S3 -->
+    <path d="M1092,338 C1150,338 1180,360 1222,360" fill="none" stroke="#E5432B" stroke-width="2.2" stroke-dasharray="7 6" marker-end="url(#arrow-red)"/>
+    <!-- operator manages cluster -->
+    <path d="M694,630 L694,538" fill="none" stroke="#E5432B" stroke-width="2.2" marker-end="url(#arrow-red)"/>
+    <!-- port-forward -->
+    <path d="M246,739 C420,739 450,712 612,712" fill="none" stroke="#111" stroke-width="2.2" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- ===================== Text ===================== -->
+  <g fill="#111" text-anchor="middle">
+    <!-- Area titles -->
+    <text x="140" y="196" font-size="24" font-weight="600">Clients</text>
+    <text x="140" y="502" font-size="15" fill="#4B5563">peered VPC (optional)</text>
+    <text x="140" y="521" font-size="15" fill="#4B5563">or this VPC</text>
+    <text x="730" y="52" font-size="26" font-weight="600">VPC 10.2.0.0/16 · redpanda-on-eks</text>
+    <text x="1096" y="128" font-size="17" text-anchor="end" fill="#4B5563">Amazon EKS</text>
+    <text x="857" y="148" font-size="24" font-weight="600">Redpanda cluster</text>
+    <text x="857" y="502" font-size="14" fill="#4B5563">TLS + SASL/SCRAM on every listener · scale out via tfvars</text>
+    <text x="857" y="520" font-size="13" fill="#4B5563">broker subnet 100.80.0.0/16: the only range routed from clients</text>
+
+    <!-- Client bars -->
+    <text x="140" y="276" font-size="15" fill="#4B5563">producers</text>
+    <text x="140" y="376" font-size="15" fill="#4B5563">consumers</text>
+    <text x="140" y="476" font-size="15" fill="#4B5563">rpk · Kafka clients</text>
+
+    <!-- Route 53 -->
+    <text x="425" y="117" font-size="15" font-weight="600">Route 53 private zone</text>
+    <text x="425" y="137" font-size="13" fill="#4B5563">bootstrap.redpanda.internal</text>
+    <text x="425" y="155" font-size="13" fill="#4B5563">redpanda-n.redpanda.internal</text>
+
+    <!-- NodePort path -->
+    <text x="421" y="226" font-size="14" font-weight="600">NodePort :31092</text>
+    <text x="421" y="326" font-size="14" font-weight="600">NodePort :31092</text>
+    <text x="421" y="426" font-size="14" font-weight="600">NodePort :31092</text>
+    <text x="421" y="258" font-size="12.5" fill="#4B5563">node IP · no load balancer</text>
+    <text x="421" y="358" font-size="12.5" fill="#4B5563">node IP · no load balancer</text>
+    <text x="421" y="458" font-size="12.5" fill="#4B5563">node IP · no load balancer</text>
+    <text x="421" y="500" font-size="13" fill="#4B5563">Admin :31644 · Schema Registry :30081</text>
+    <text x="421" y="518" font-size="13" fill="#4B5563">HTTP Proxy :30082</text>
+    <text x="425" y="190" font-size="13" fill="#E5432B">brokers publish their node IP</text>
+
+    <!-- Brokers -->
+    <text x="720" y="206" font-size="20" font-weight="600">redpanda-0</text>
+    <text x="990" y="306" font-size="20" font-weight="600">redpanda-1</text>
+    <text x="720" y="406" font-size="20" font-weight="600">redpanda-2</text>
+    <text x="720" y="280" font-size="13" fill="#4B5563">m7gd.2xlarge · local NVMe (XFS)</text>
+    <text x="990" y="380" font-size="13" fill="#4B5563">m7gd.2xlarge · local NVMe (XFS)</text>
+    <text x="720" y="480" font-size="13" fill="#4B5563">m7gd.2xlarge · local NVMe (XFS)</text>
+    <text x="1000" y="236" font-size="13" fill="#4B5563">one dedicated node per broker</text>
+    <text x="1000" y="254" font-size="13" fill="#4B5563">Karpenter NodePool, single AZ</text>
+
+    <!-- Core node group -->
+    <text x="857" y="618" font-size="18" font-weight="600">Core node group · 3× m5.large</text>
+    <text x="694" y="661" font-size="15" font-weight="600">Operator</text>
+    <text x="859" y="661" font-size="15" font-weight="600">Console</text>
+    <text x="1024" y="661" font-size="15" font-weight="600">Connect</text>
+    <text x="694" y="717" font-size="15">ArgoCD</text>
+    <text x="859" y="717" font-size="15">Prometheus</text>
+    <text x="1024" y="717" font-size="15">Grafana</text>
+    <text x="694" y="773" font-size="15">cert-manager</text>
+    <text x="859" y="773" font-size="15">Karpenter</text>
+    <text x="1024" y="773" font-size="15">LB Controller</text>
+    <text x="1024" y="806" font-size="12" fill="#4B5563">dashed = optional</text>
+    <text x="735" y="584" font-size="13" fill="#E5432B" text-anchor="start">manages</text>
+
+    <!-- S3 -->
+    <text x="1316" y="296" font-size="20" font-weight="600">Amazon S3</text>
+    <text x="1316" y="384" font-size="15" font-weight="600">Tiered Storage</text>
+    <text x="1316" y="402" font-size="13" fill="#4B5563">(optional)</text>
+    <text x="1316" y="422" font-size="13" fill="#4B5563">Enterprise license</text>
+    <text x="1316" y="440" font-size="13" fill="#4B5563">IRSA, no static keys</text>
+
+    <!-- You -->
+    <text x="140" y="712" font-size="24" font-weight="600">You</text>
+    <text x="140" y="776" font-size="15" fill="#4B5563">kubectl port-forward</text>
+    <text x="140" y="795" font-size="15" fill="#4B5563">ArgoCD · Console · Grafana</text>
+  </g>
+</svg>

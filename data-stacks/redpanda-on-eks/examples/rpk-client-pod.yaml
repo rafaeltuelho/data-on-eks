@@ -1,0 +1,39 @@
+# In-cluster client pod with rpk, using the internal listener (TLS + SASL).
+#   kubectl apply -f examples/rpk-client-pod.yaml
+#   kubectl exec -it -n redpanda rpk-client -- bash
+#   rpk cluster info -X user=admin -X pass="$ADMIN_PASSWORD"   # password: see README
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rpk-client
+  namespace: redpanda
+spec:
+  nodeSelector:
+    NodeGroupType: core
+  containers:
+    - name: rpk
+      image: docker.redpanda.com/redpandadata/redpanda:v26.2.3
+      command: ["sleep", "infinity"]
+      env:
+        - name: RPK_BROKERS
+          value: redpanda.redpanda.svc.cluster.local:9093
+        - name: RPK_TLS_ENABLED
+          value: "true"
+        - name: RPK_TLS_CA
+          value: /etc/redpanda-ca/ca.crt
+        - name: RPK_ADMIN_HOSTS
+          value: redpanda.redpanda.svc.cluster.local:9644
+        - name: RPK_ADMIN_TLS_ENABLED
+          value: "true"
+        - name: RPK_ADMIN_TLS_CA
+          value: /etc/redpanda-ca/ca.crt
+        - name: RPK_SASL_MECHANISM
+          value: SCRAM-SHA-512
+      volumeMounts:
+        - name: redpanda-ca
+          mountPath: /etc/redpanda-ca
+          readOnly: true
+  volumes:
+    - name: redpanda-ca
+      secret:
+        secretName: redpanda-default-root-certificate

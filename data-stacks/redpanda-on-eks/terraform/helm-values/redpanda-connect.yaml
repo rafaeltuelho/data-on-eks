@@ -1,0 +1,51 @@
+# Helm values for the redpanda/connect chart (Redpanda Connect, streams mode off).
+# Sample pipeline: generates one JSON event per second into topic ${topic}, through the
+# internal Kafka listener with TLS (default CA) and SASL/SCRAM (User ${username}).
+# Replace `config` with your own pipeline: https://docs.redpanda.com/redpanda-connect/
+deployment:
+  replicaCount: 1
+nodeSelector:
+  NodeGroupType: core
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+env:
+  - name: RP_SASL_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: ${password_secret_name}
+        key: password
+extraVolumes:
+  - name: redpanda-ca
+    secret:
+      secretName: ${ca_secret_name}
+extraVolumeMounts:
+  - name: redpanda-ca
+    mountPath: /etc/redpanda-ca
+    readOnly: true
+# Pipeline metrics: ServiceMonitor picked up by kube-prometheus-stack
+serviceMonitor:
+  enabled: true
+config:
+  input:
+    generate:
+      interval: 1s
+      mapping: |
+        root.id = uuid_v4()
+        root.ts = now()
+        root.value = random_int(max: 100)
+  output:
+    redpanda:
+      seed_brokers:
+        - ${seed_broker}
+      topic: ${topic}
+      tls:
+        enabled: true
+        root_cas_file: /etc/redpanda-ca/ca.crt
+      sasl:
+        - mechanism: SCRAM-SHA-512
+          username: ${username}
+          password: $${RP_SASL_PASSWORD}

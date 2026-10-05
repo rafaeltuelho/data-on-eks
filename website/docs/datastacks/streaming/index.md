@@ -37,6 +37,30 @@ Real-time data streaming and event-driven platforms on Amazon EKS. Process conti
 
 <div className="datastack-card">
 <div className="datastack-header">
+<div className="datastack-icon">🐼</div>
+<div className="datastack-content">
+<h3>Redpanda on EKS</h3>
+<p className="datastack-description">Kafka API-compatible streaming platform deployed with the Redpanda Operator, TLS + SASL/SCRAM and local NVMe storage.</p>
+</div>
+</div>
+<div className="datastack-features">
+<span className="feature-tag">Redpanda Operator</span>
+<span className="feature-tag">Kafka API</span>
+<span className="feature-tag">Low Latency</span>
+<span className="feature-tag">Redpanda Console</span>
+</div>
+<div className="datastack-footer">
+<a href="/data-on-eks/docs/datastacks/streaming/redpanda-on-eks/" className="datastack-link">
+<span>Explore Redpanda</span>
+<svg className="arrow-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+<path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+</svg>
+</a>
+</div>
+</div>
+
+<div className="datastack-card">
+<div className="datastack-header">
 <div className="datastack-icon">🌊</div>
 <div className="datastack-content">
 <h3>Flink on EKS</h3>

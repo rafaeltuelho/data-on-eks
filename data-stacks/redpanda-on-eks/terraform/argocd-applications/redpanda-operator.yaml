@@ -1,0 +1,36 @@
+# Redpanda Operator (official redpanda/operator chart), cluster scope.
+# Installs the CRDs (crds.enabled) through a pre-install hook Job, which ArgoCD runs
+# as a PreSync hook.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redpanda-operator
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://charts.redpanda.com
+    chart: operator
+    targetRevision: "${chart_version}"
+    helm:
+      releaseName: redpanda-controller
+      values: |
+        ${user_values_yaml}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ${namespace}
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

@@ -1,0 +1,210 @@
+# Applied by Terraform (redpanda.tf) as a template; $${VAR} placeholders come from
+# local.redpanda_cluster_template_vars (redpanda-variables.tf / data-stack.tfvars).
+# spec.clusterSpec takes the redpanda Helm chart values; settings follow
+# https://docs.redpanda.com/streaming/current/deploy/redpanda/kubernetes/k-production-deployment/
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: Redpanda
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  clusterSpec:
+    image:
+      tag: ${REDPANDA_VERSION}
+%{ if LICENSE_ENABLED ~}
+    enterprise:
+      licenseSecretRef:
+        name: ${LICENSE_SECRET_NAME}
+        key: license
+%{ endif ~}
+    # Console runs as a standalone Console resource (console.yaml): the console stanza
+    # is deprecated since Redpanda Operator v25.2.1.
+    console:
+      enabled: false
+
+    statefulset:
+      # Odd number of brokers. Expand by raising redpanda_broker_replicas and re-applying.
+      replicas: ${REPLICAS}
+      updateStrategy:
+        type: RollingUpdate
+      budget:
+        maxUnavailable: 1
+      podTemplate:
+        annotations:
+          # Local NVMe data is lost on node replacement; block voluntary disruption
+          karpenter.sh/do-not-disrupt: "true"
+        spec:
+          terminationGracePeriodSeconds: 100
+          # One dedicated node per broker (redpanda-broker NodePool, tainted); the chart's
+          # default hard pod anti-affinity keeps one broker per node.
+          nodeSelector:
+            karpenter.sh/nodepool: redpanda-broker
+          tolerations:
+            - key: redpanda/dedicated
+              operator: Equal
+              value: broker
+              effect: NoSchedule
+          # Publishes this broker's external DNS records (see external: below): merged by
+          # name into the chart's init containers, runs with the broker IAM role (IRSA).
+          initContainers:
+            - name: route53-dns
+              image: public.ecr.aws/aws-cli/aws-cli:2.37.9
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -u
+                  name="$POD_NAME.$DOMAIN"
+                  batch=$(cat <<JSON
+                  {"Comment": "$POD_NAME on $NODE_NAME", "Changes": [
+                    {"Action": "UPSERT", "ResourceRecordSet": {"Name": "$name", "Type": "A", "TTL": 30,
+                      "ResourceRecords": [{"Value": "$HOST_IP"}]}},
+                    {"Action": "UPSERT", "ResourceRecordSet": {"Name": "bootstrap.$DOMAIN", "Type": "A", "TTL": 30,
+                      "SetIdentifier": "$POD_NAME", "MultiValueAnswer": true, "ResourceRecords": [{"Value": "$HOST_IP"}]}}
+                  ]}
+                  JSON
+                  )
+                  for i in 1 2 3 4 5; do
+                    if aws route53 change-resource-record-sets --hosted-zone-id "$ZONE_ID" --change-batch "$batch"; then
+                      echo "Published $name and bootstrap.$DOMAIN -> $HOST_IP"; exit 0
+                    fi
+                    sleep $((i * 5))
+                  done
+                  # Do not block the broker on a Route 53 outage; external clients see stale DNS until the next restart
+                  echo "ERROR: could not publish $name -> $HOST_IP"; exit 0
+              env:
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: NODE_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: spec.nodeName
+                - name: HOST_IP
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: status.hostIP
+                - name: DOMAIN
+                  value: ${EXTERNAL_DOMAIN}
+                - name: ZONE_ID
+                  value: ${DNS_ZONE_ID}
+                - name: AWS_REGION
+                  value: ${AWS_REGION}
+                - name: HOME
+                  value: /tmp
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  memory: 128Mi
+      initContainers:
+        # Refuse to start on a data directory that is not XFS
+        fsValidator:
+          enabled: true
+          expectedFS: xfs
+
+    resources:
+      cpu:
+        cores: ${CPU_CORES}
+      memory:
+        enable_memory_locking: true
+        container:
+          max: ${MEMORY}
+
+    # Local NVMe instance store exposed by the local static provisioner (XFS)
+    storage:
+      persistentVolume:
+        enabled: true
+        size: ${STORAGE_SIZE}
+        storageClass: local-storage
+%{ if TIERED_STORAGE_ENABLED ~}
+      # Enterprise: Tiered Storage to S3 (redpanda-enterprise.tf). Credentials come from
+      # the IRSA role on the broker ServiceAccount (sts).
+      tiered:
+        config:
+          cloud_storage_enabled: true
+          cloud_storage_credentials_source: sts
+          cloud_storage_region: ${TIERED_STORAGE_REGION}
+          cloud_storage_bucket: ${TIERED_STORAGE_BUCKET}
+%{ endif ~}
+
+    # Broker IAM role (IRSA): Route 53 records for the external listeners, and the
+    # Tiered Storage bucket when enabled
+    serviceAccount:
+      create: true
+      annotations:
+        eks.amazonaws.com/role-arn: ${BROKER_ROLE_ARN}
+
+    tuning:
+      tune_aio_events: true
+
+    # TLS on every listener; cert-manager issues the certificates from two self-signed
+    # CAs: "default" (internal listeners) and "external" (NodePort listeners, SANs
+    # <domain> and *.<domain>).
+    tls:
+      enabled: true
+      certs:
+        default:
+          caEnabled: true
+        external:
+          caEnabled: true
+
+    # SASL/SCRAM on every listener. Superusers are read from the Secret below
+    # (users.txt, created by redpanda.tf). The operator also creates a bootstrap user
+    # (Secret redpanda-bootstrap-user) that it and Console use.
+    auth:
+      sasl:
+        enabled: true
+        mechanism: SCRAM-SHA-512
+        secretRef: ${SUPERUSERS_SECRET_NAME}
+        users: []
+        bootstrapUser:
+          mechanism: SCRAM-SHA-512
+
+    # External listeners for clients outside the cluster (this VPC or the peered VPC),
+    # exposed as NodePorts on the broker nodes: no load balancer in the data path, as in
+    # Redpanda BYOC over VPC peering. Each broker advertises
+    # redpanda-<n>.${EXTERNAL_DOMAIN}:<node port>; the route53-dns init container points
+    # that name at the broker's node IP.
+    external:
+      enabled: true
+      type: NodePort
+      domain: ${EXTERNAL_DOMAIN}
+    listeners:
+%{ for name, key in { kafka = "kafka", admin = "admin", schemaRegistry = "schema-registry", http = "http-proxy" } ~}
+      ${name}:
+        external:
+          default:
+            port: ${EXTERNAL_PORTS[key].port}
+            advertisedPorts:
+              - ${EXTERNAL_PORTS[key].node_port}
+%{ endfor ~}
+
+    config:
+      cluster:
+        # Admin API requires credentials too
+        admin_api_require_auth: true
+        default_topic_replications: 3
+        # Consumer group lag metrics (used by the Kafka Consumer Offsets dashboard)
+        enable_consumer_group_metrics:
+          - group
+          - partition
+          - consumer_lag
+%{ if CONTINUOUS_BALANCING_ENABLED ~}
+        # Enterprise: Continuous Data Balancing (moves partitions on node changes and disk usage)
+        partition_autobalancing_mode: continuous
+%{ endif ~}
+      node:
+        crash_loop_limit: 5
+        crash_loop_sleep_sec: 60
+
+    # ServiceMonitor (label app.kubernetes.io/name: redpanda) scraping /public_metrics;
+    # kube-prometheus-stack selects ServiceMonitors in all namespaces.
+    # See https://docs.redpanda.com/streaming/current/manage/kubernetes/monitoring/k-monitor-redpanda/
+    monitoring:
+      enabled: true
+      scrapeInterval: 30s
+
+    logging:
+      logLevel: info

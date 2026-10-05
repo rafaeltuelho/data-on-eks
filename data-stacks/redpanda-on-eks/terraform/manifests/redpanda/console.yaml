@@ -1,0 +1,68 @@
+# Redpanda Console as a standalone Console resource. With clusterRef the operator wires
+# the broker addresses, TLS and SASL (bootstrap user) from the Redpanda resource.
+# Reach it with: kubectl port-forward -n ${NAMESPACE} svc/redpanda-console 8080:8080
+# Without an Enterprise license Console has no login: anyone who can reach it acts as
+# the bootstrap superuser, so keep redpanda_console_exposure = "none" unless you restrict
+# access. With a license (redpanda_enterprise_console_auth), users log in with their
+# Redpanda SASL/SCRAM credentials and Console RBAC applies (static service account mode).
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: Console
+metadata:
+  name: redpanda-console
+  namespace: ${NAMESPACE}
+spec:
+  cluster:
+    clusterRef:
+      name: ${CLUSTER_NAME}
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+  nodeSelector:
+    NodeGroupType: core
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: console
+            topologyKey: kubernetes.io/hostname
+  service:
+    type: ${SERVICE_TYPE}
+    port: 8080
+%{ if SERVICE_TYPE == "LoadBalancer" ~}
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: external
+      service.beta.kubernetes.io/aws-load-balancer-scheme: ${NLB_SCHEME}
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+%{ if NLB_SUBNET_ID != "" ~}
+      service.beta.kubernetes.io/aws-load-balancer-subnets: ${NLB_SUBNET_ID}
+%{ endif ~}
+      service.beta.kubernetes.io/load-balancer-source-ranges: "${ALLOWED_CIDRS}"
+%{ endif ~}
+%{ if AUTH_ENABLED ~}
+  # Enterprise: login with Redpanda SASL users; RBAC role bindings decide what each user
+  # can do in Console. API calls use the operator-wired bootstrap user.
+  config:
+    authentication:
+      basic:
+        enabled: true
+      # Console is served over plain HTTP (port-forward / NLB)
+      useSecureCookies: false
+    authorization:
+      roleBindings:
+        - roleName: admin
+          users:
+            - loginType: basic
+              name: ${ADMIN_USER}
+  secret:
+    # Console enterprise features need the license too
+    license: "${LICENSE}"
+    authentication:
+      jwtSigningKey: "${JWT_SIGNING_KEY}"
+%{ endif ~}

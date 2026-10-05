@@ -1,0 +1,33 @@
+# Redpanda broker nodes (applied together with the base ec2nodeclass.yaml, see karpenter.tf).
+# Same NVMe udev discovery as the base ephemeral-nvme-local-provisioner class, so the
+# local static provisioner exposes each instance store disk as a `local-storage` PV
+# (formatted XFS, as the Redpanda production docs recommend), but WITHOUT the Spark-tuned
+# MemoryQoS / memoryThrottlingFactor: page cache counts toward memory.high and would
+# throttle the broker cgroup.
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: redpanda-broker-nvme
+  namespace: karpenter
+spec:
+  amiFamily: AL2023
+  amiSelectorTerms:
+    - alias: al2023@latest
+  role: "${KARPENTER_NODE_IAM_ROLE_NAME}"
+  subnetSelectorTerms:
+    - tags:
+        Name: "${CLUSTER_NAME}-private-secondary*"
+  securityGroupSelectorTerms:
+    - tags:
+        Name: "${CLUSTER_NAME}-node"
+  userData: |
+    #!/bin/bash
+
+    set -ex
+
+    cat <<EOF > /etc/udev/rules.d/90-kubernetes-discovery.rules
+    # Discover Instance Storage disks so kubernetes local provisioner can pick them up from /dev/disk/kubernetes
+    KERNEL=="nvme[0-9]*n[0-9]*", ENV{DEVTYPE}=="disk", ATTRS{model}=="Amazon EC2 NVMe Instance Storage", ATTRS{serial}=="?*", SYMLINK+="disk/kubernetes/nvme-\\\$attr{model}_\\\$attr{serial}", OPTIONS="string_escape=replace"
+    EOF
+
+    udevadm control --reload && udevadm trigger

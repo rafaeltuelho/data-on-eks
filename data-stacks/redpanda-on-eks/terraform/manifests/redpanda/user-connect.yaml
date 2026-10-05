@@ -1,0 +1,32 @@
+# SASL/SCRAM user for the Redpanda Connect sample pipeline (redpanda-connect.tf), managed
+# by the operator's User controller. Its password lives in Secret ${PASSWORD_SECRET_NAME}.
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: User
+metadata:
+  name: ${USERNAME}
+  namespace: ${NAMESPACE}
+spec:
+  cluster:
+    clusterRef:
+      name: ${CLUSTER_NAME}
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: ${PASSWORD_SECRET_NAME}
+          key: password
+  authorization:
+    acls:
+      - type: allow
+        resource:
+          type: topic
+          name: ${TOPIC_PREFIX}
+          patternType: prefixed
+        operations: [Read, Write, Describe, Create]
+      - type: allow
+        resource:
+          type: group
+          name: ${TOPIC_PREFIX}
+          patternType: prefixed
+        operations: [Read, Describe]

@@ -1,0 +1,13 @@
+# Topic for the Redpanda Connect sample pipeline, managed by the operator's Topic controller
+# (Redpanda does not auto-create topics by default).
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: Topic
+metadata:
+  name: ${TOPIC}
+  namespace: ${NAMESPACE}
+spec:
+  cluster:
+    clusterRef:
+      name: ${CLUSTER_NAME}
+  partitions: 3
+  replicationFactor: 3

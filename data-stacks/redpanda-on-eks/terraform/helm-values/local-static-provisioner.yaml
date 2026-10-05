@@ -1,0 +1,21 @@
+# Helm values for local-volume-static-provisioner
+# See: https://github.com/kubernetes-sigs/sig-storage-local-static-provisioner for chart details
+nodeSelector:
+  NodeGroupType: EphemeralStorageLocalProvisioner
+# Redpanda: run on the tainted broker nodes too
+tolerations:
+  - key: redpanda/dedicated
+    operator: Equal
+    value: broker
+    effect: NoSchedule
+# classes defines the storage classes to be created and managed by the provisioner.
+classes:
+  - name: local-storage
+    # hostDir is the path on the host node where the provisioner will discover and manage storage. We make ephemeral disks available in user data.
+    hostDir: /dev/disk/kubernetes
+    # Raw NVMe devices are formatted and mounted by kubelet as filesystem volumes.
+    # XFS is the filesystem the Redpanda production docs recommend.
+    volumeMode: Filesystem
+    fsType: xfs
+    # This will create the 'local-storage' StorageClass object in Kubernetes.
+    storageClass: true

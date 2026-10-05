@@ -1,0 +1,36 @@
+# Enterprise: Redpanda Connect sample pipeline as an operator Pipeline resource (beta in
+# Redpanda Operator 26.2). The operator injects seed_brokers, TLS and SASL (from userRef)
+# into the redpanda output, so configYaml only holds the pipeline logic.
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: Pipeline
+metadata:
+  name: ${NAME}
+  namespace: ${NAMESPACE}
+spec:
+  displayName: Connect demo generator
+  description: Generates one JSON event per second into topic ${TOPIC}
+  cluster:
+    clusterRef:
+      name: ${CLUSTER_NAME}
+  userRef:
+    name: ${USERNAME}
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  nodeSelector:
+    NodeGroupType: core
+  configYaml: |
+    input:
+      generate:
+        interval: 1s
+        mapping: |
+          root.id = uuid_v4()
+          root.ts = now()
+          root.value = random_int(max: 100)
+    output:
+      redpanda:
+        topic: ${TOPIC}

@@ -1,0 +1,34 @@
+# Non-superuser with ACLs, managed by the Redpanda Operator's User controller.
+# The operator generates the password into Secret orders-app-password if it does not exist:
+#   kubectl apply -f examples/redpanda-user.yaml
+#   kubectl get secret orders-app-password -n redpanda -o jsonpath='{.data.password}' | base64 -d
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: User
+metadata:
+  name: orders-app
+  namespace: redpanda
+spec:
+  cluster:
+    clusterRef:
+      name: redpanda
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: orders-app-password
+          key: password
+  authorization:
+    acls:
+      - type: allow
+        resource:
+          type: topic
+          name: orders
+          patternType: literal
+        operations: [Read, Write, Describe]
+      - type: allow
+        resource:
+          type: group
+          name: orders-
+          patternType: prefixed
+        operations: [Read, Describe]

@@ -1,0 +1,30 @@
+# Topics managed by the Redpanda Operator's Topic controller.
+# kubectl apply -f examples/redpanda-topics.yaml
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: Topic
+metadata:
+  name: orders
+  namespace: redpanda
+spec:
+  cluster:
+    clusterRef:
+      name: redpanda
+  partitions: 6
+  replicationFactor: 3
+  additionalConfig:
+    retention.ms: "604800000" # 7 days
+    cleanup.policy: delete
+---
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: Topic
+metadata:
+  name: customers
+  namespace: redpanda
+spec:
+  cluster:
+    clusterRef:
+      name: redpanda
+  partitions: 3
+  replicationFactor: 3
+  additionalConfig:
+    cleanup.policy: compact

@@ -1,0 +1,30 @@
+# Helm values for the redpanda/operator chart
+# See: https://docs.redpanda.com/streaming/current/deploy/redpanda/kubernetes/k-production-deployment/
+crds:
+  enabled: true
+%{ if license_enabled ~}
+# Operator-level Enterprise license (unlocks the operator's enterprise controllers)
+enterprise:
+  licenseSecretRef:
+    name: ${license_secret_name}
+    key: license
+%{ endif ~}
+%{ if connect_controller ~}
+# Enterprise: Redpanda Connect controller (Pipeline resources, beta in 26.2). Needs a
+# license that includes Redpanda Connect. PodMonitor per pipeline for Prometheus.
+connectController:
+  enabled: true
+  monitoring:
+    enabled: true
+%{ endif ~}
+nodeSelector:
+  NodeGroupType: core
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+# Operator metrics: ServiceMonitor picked up by kube-prometheus-stack
+monitoring:
+  enabled: true
