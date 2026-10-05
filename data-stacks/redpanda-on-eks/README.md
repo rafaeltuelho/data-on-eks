@@ -272,6 +272,39 @@ scrapes them in all namespaces. Grafana loads these dashboards from
 Kafka Consumer Offsets and Redpanda Connect. Consumer lag metrics are enabled with
 `enable_consumer_group_metrics`.
 
+## Troubleshooting
+
+### Clients cannot resolve the broker names
+
+The client VPC's built-in DNS server, the **Amazon Route 53 Resolver**, resolves the broker names.
+It listens at the VPC's base address + 2 (for example `172.31.0.2`) and at `169.254.169.253`.
+It answers from the private hosted zone `<redpanda_external_domain>`, which the stack associates with
+this VPC and with the peered VPC (`redpanda_peer_vpc_id`). The brokers' `route53-dns` init containers
+write the records in that zone. DNS lookups never cross the peering: each associated VPC resolves the
+zone locally. Only the Kafka traffic goes over the peering.
+
+Check from a client instance:
+
+```bash
+dig +short bootstrap.redpanda.internal          # one IP per broker (the node IPs)
+dig +short redpanda-0.redpanda.internal
+```
+
+If the names don't resolve:
+
+- **VPC DNS settings**: both "DNS resolution" and "DNS hostnames" (`enableDnsSupport`,
+  `enableDnsHostnames`) must be enabled on the client VPC.
+- **Custom DNS servers**: if the client VPC's DHCP options set points at your own DNS servers (for example
+  Active Directory), those servers don't see the private zone. Forward `redpanda.internal` to the VPC
+  resolver at base + 2.
+- **Clients outside the VPC**: a laptop on VPN or an on-prem host needs a Route 53 Resolver inbound
+  endpoint (or a DNS forwarder) in the client VPC.
+- **Other VPCs**: only this VPC and the peered VPC are associated with the zone. Associate any other
+  VPC with the zone before using it.
+- **Missing or stale records**: each broker publishes its records when it starts. Check what it wrote
+  with `kubectl -n redpanda logs redpanda-0 -c route53-dns` and `./helper.sh get-external-services`
+  (broker, node and node IP).
+
 ## Cleanup
 
 ```bash
