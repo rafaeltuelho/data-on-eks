@@ -62,14 +62,17 @@ variable "redpanda_external_domain" {
   default     = "redpanda.internal"
 }
 
-variable "redpanda_peer_vpc_id" {
-  description = "VPC ID of a client VPC (same account and region) to peer with. null disables peering and only this VPC reaches the external listeners."
-  type        = string
-  default     = null
+# Client networks. Like Redpanda BYOC, the stack does not create the client connectivity
+# (VPC peering, Transit Gateway, VPN): the client side sets it up and routes
+# redpanda_client_routed_cidr (output) to this VPC. See "Connect a client VPC" in README.md.
+variable "redpanda_client_cidrs" {
+  description = "Client CIDRs allowed to reach the external listeners (node security group). This VPC's CIDRs are always allowed. Add the peered VPC, Transit Gateway or VPN ranges."
+  type        = list(string)
+  default     = []
 }
 
-variable "redpanda_external_client_cidrs" {
-  description = "Extra CIDRs allowed to reach the external listeners (e.g. a VPN), in addition to the peer VPC (or this VPC) CIDR. They must be routed to the broker subnet."
+variable "redpanda_client_vpc_ids" {
+  description = "Client VPCs (same account) to associate with the private DNS zone so they resolve the broker names. For another account, use a Route 53 VPC association authorization instead (README.md)."
   type        = list(string)
   default     = []
 }
@@ -94,8 +97,14 @@ variable "redpanda_enterprise_license" {
   sensitive   = true
 }
 
-# Enterprise features: applied only when redpanda_enterprise_license is set. Set one to
-# false to keep it off even with a license.
+variable "redpanda_enterprise_builtin_trial" {
+  description = "Use the 30-day Enterprise trial that every new Redpanda cluster (24.3+) gets, without a license key: enables the cluster-side features (Tiered Storage, Continuous Data Balancing). After 30 days they enter a restricted state and upgrades are blocked until you set a license or turn this off. Console login and Connect Pipeline still need a key."
+  type        = bool
+  default     = true
+}
+
+# Enterprise features: applied when redpanda_enterprise_license is set (or, for the
+# cluster-side ones, during the built-in trial). Set one to false to keep it off.
 variable "redpanda_enterprise_tiered_storage" {
   description = "With a license: Tiered Storage to a dedicated S3 bucket (IRSA, no static keys)."
   type        = bool
@@ -121,7 +130,7 @@ variable "enable_redpanda_console" {
 }
 
 variable "redpanda_console_exposure" {
-  description = "How Console is exposed besides kubectl port-forward: none, internal (NLB in the broker subnet, reachable from the peered VPC) or internet-facing (NLB in the public subnets)."
+  description = "How Console is exposed besides kubectl port-forward: none, internal (NLB in the broker subnet, reachable from the client networks) or internet-facing (NLB in the public subnets)."
   type        = string
   default     = "none"
 
@@ -165,23 +174,23 @@ locals {
   redpanda_cluster_name = "redpanda" # Redpanda resource name; brokers are redpanda-<n>
 
   # Brokers run in the secondary subnet of redpanda_zone (Karpenter selects the
-  # private-secondary subnets; the NodePool pins the zone). This is the only range the
-  # peered client VPC routes here. Subnets are created in local.azs order (vpc.tf).
+  # private-secondary subnets; the NodePool pins the zone). This is the only range a client
+  # network needs to route here. Subnets are created in local.azs order (vpc.tf).
   redpanda_zone_index         = index(local.azs, var.redpanda_zone)
   redpanda_broker_subnet_cidr = var.secondary_cidrs[local.redpanda_zone_index]
   redpanda_broker_subnet_id   = module.vpc.private_subnets[length(local.azs) + local.redpanda_zone_index]
 
   # Clients allowed to reach the external listeners (NodePorts on the broker nodes)
-  redpanda_client_cidrs = distinct(concat(
-    var.redpanda_peer_vpc_id == null ? [var.vpc_cidr] : [data.aws_vpc.redpanda_peer[0].cidr_block],
-    var.redpanda_external_client_cidrs,
-  ))
+  redpanda_client_cidrs = distinct(concat([var.vpc_cidr], var.secondary_cidrs, var.redpanda_client_cidrs))
 
   # Enterprise license and the features it unlocks. nonsensitive(): only the presence of
   # the license drives count/templates, never its value.
-  redpanda_license_enabled              = nonsensitive(var.redpanda_enterprise_license != null)
-  redpanda_tiered_storage_enabled       = local.redpanda_license_enabled && var.redpanda_enterprise_tiered_storage
-  redpanda_continuous_balancing_enabled = local.redpanda_license_enabled && var.redpanda_enterprise_continuous_balancing
+  redpanda_license_enabled = nonsensitive(var.redpanda_enterprise_license != null)
+  # Cluster-side features also run on the built-in 30-day trial (no key). Console login and
+  # the operator Connect controller read a license key, so they stay key-only.
+  redpanda_cluster_enterprise_enabled   = local.redpanda_license_enabled || var.redpanda_enterprise_builtin_trial
+  redpanda_tiered_storage_enabled       = local.redpanda_cluster_enterprise_enabled && var.redpanda_enterprise_tiered_storage
+  redpanda_continuous_balancing_enabled = local.redpanda_cluster_enterprise_enabled && var.redpanda_enterprise_continuous_balancing
   redpanda_console_auth_enabled         = local.redpanda_license_enabled && var.redpanda_enterprise_console_auth && var.enable_redpanda_console
   redpanda_connect_mode = (
     !var.enable_redpanda_connect ? "none" :

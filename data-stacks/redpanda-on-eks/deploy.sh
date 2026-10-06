@@ -64,15 +64,32 @@ print_redpanda_summary() {
 
     grafana_user=$(kubectl get secret grafana-admin-secret -n monitoring -o jsonpath='{.data.admin-user}' 2>/dev/null | base64 -d 2>/dev/null || true)
     grafana_pass=$(kubectl get secret grafana-admin-secret -n monitoring -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-    console_lb=$(kubectl get svc redpanda-console -n "$ns" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+    console_lb=$(kubectl get svc redpanda-console-console -n "$ns" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+
+    local cluster_name
+    cluster_name=$(terraform -chdir="$TERRAFORM_DIR/_local" output -raw cluster_name 2>/dev/null || echo "$STACKS")
+
+    echo ""
+    echo "========================================="
+    echo "kubectl access (uses your AWS credentials, e.g. an SSO session)"
+    echo "========================================="
+    echo "Option 1, this shell only (kubeconfig created by the deploy):"
+    echo "   export KUBECONFIG=$PWD/$KUBECONFIG_FILE"
+    echo ""
+    echo "Option 2, add it to ~/.kube/config as context $cluster_name:"
+    echo "   aws eks update-kubeconfig --name $cluster_name --region $AWS_REGION --alias $cluster_name"
+    echo "   kubectl config use-context $cluster_name"
+    echo ""
+    echo "Check: kubectl get redpanda,console -n $ns   (on Unauthorized/token errors: aws sso login)"
 
     echo ""
     echo "========================================="
     echo "Redpanda Access"
     echo "========================================="
-    echo "1. Bootstrap address (TLS + SASL/SCRAM-SHA-512, this VPC or the peered client VPC):"
+    echo "1. Bootstrap address (TLS + SASL/SCRAM-SHA-512, this VPC or a connected client network):"
     echo "   ${bootstrap:-bootstrap.<domain>:31092}"
     echo "   Brokers: terraform -chdir=$TERRAFORM_DIR/_local output redpanda_broker_addresses"
+    echo "   Client networks: peer/route to this VPC, see terraform -chdir=$TERRAFORM_DIR/_local output redpanda_client_connectivity"
     echo ""
     echo "2. External listener CA (clients must trust it):"
     if [ -n "$ca_file" ]; then
@@ -96,7 +113,7 @@ print_redpanda_summary() {
     echo "   rpk cluster info"
     echo ""
     echo "5. Redpanda Console:"
-    echo "   kubectl port-forward -n $ns svc/redpanda-console 8080:8080"
+    echo "   kubectl port-forward -n $ns svc/redpanda-console-console 8080:8080"
     echo "   Open http://localhost:8080"
     if [ "$console_auth" = "true" ]; then
         echo "   Log in with a Redpanda SASL user, e.g. ${user:-admin} (Console admin role)"

@@ -176,7 +176,7 @@ resource "kubectl_manifest" "redpanda_console" {
 # Outputs
 #---------------------------------------------------------------
 output "redpanda_bootstrap_servers" {
-  description = "Kafka API bootstrap address for clients in this VPC or the peered VPC (TLS + SASL/SCRAM-SHA-512)"
+  description = "Kafka API bootstrap address for clients in this VPC or a connected client network (TLS + SASL/SCRAM-SHA-512)"
   value       = "bootstrap.${var.redpanda_external_domain}:${local.redpanda_external_ports["kafka"].node_port}"
 }
 
@@ -188,11 +188,6 @@ output "redpanda_broker_addresses" {
 output "redpanda_admin_api" {
   description = "Admin API address for rpk on clients (TLS + basic auth)"
   value       = "bootstrap.${var.redpanda_external_domain}:${local.redpanda_external_ports["admin"].node_port}"
-}
-
-output "redpanda_client_routed_cidr" {
-  description = "Range a client network must route to this VPC (broker subnet); the stack adds it to the peered VPC's route tables"
-  value       = local.redpanda_broker_subnet_cidr
 }
 
 output "redpanda_admin_username" {

@@ -99,8 +99,8 @@
   <g fill="#111" text-anchor="middle">
     <!-- Area titles -->
     <text x="140" y="196" font-size="24" font-weight="600">Clients</text>
-    <text x="140" y="502" font-size="15" fill="#4B5563">peered VPC (optional)</text>
-    <text x="140" y="521" font-size="15" fill="#4B5563">or this VPC</text>
+    <text x="140" y="502" font-size="15" fill="#4B5563">client VPC: peering / TGW</text>
+    <text x="140" y="521" font-size="15" fill="#4B5563">set up by the client side</text>
     <text x="730" y="52" font-size="26" font-weight="600">VPC 10.2.0.0/16 · redpanda-on-eks</text>
     <text x="1096" y="128" font-size="17" text-anchor="end" fill="#4B5563">Amazon EKS</text>
     <text x="857" y="148" font-size="24" font-weight="600">Redpanda cluster</text>

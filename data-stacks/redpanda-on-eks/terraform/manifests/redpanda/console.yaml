@@ -1,6 +1,6 @@
 # Redpanda Console as a standalone Console resource. With clusterRef the operator wires
 # the broker addresses, TLS and SASL (bootstrap user) from the Redpanda resource.
-# Reach it with: kubectl port-forward -n ${NAMESPACE} svc/redpanda-console 8080:8080
+# Reach it with: kubectl port-forward -n ${NAMESPACE} svc/redpanda-console-console 8080:8080
 # Without an Enterprise license Console has no login: anyone who can reach it acts as
 # the bootstrap superuser, so keep redpanda_console_exposure = "none" unless you restrict
 # access. With a license (redpanda_enterprise_console_auth), users log in with their

@@ -1,5 +1,6 @@
 #---------------------------------------------------------------
-# Redpanda Enterprise features (only when TF_VAR_redpanda_enterprise_license is set)
+# Redpanda Enterprise features (TF_VAR_redpanda_enterprise_license, or the built-in
+# 30-day trial for the cluster-side ones: redpanda_enterprise_builtin_trial)
 #
 # The license is stored in Secret redpanda-license (redpanda.tf) and referenced by the
 # Redpanda resource (cluster license) and the operator (operator-level license, needed by
@@ -101,6 +102,7 @@ output "redpanda_enterprise_features" {
   description = "Enterprise features enabled in this deployment"
   value = {
     license              = local.redpanda_license_enabled
+    builtin_trial        = !local.redpanda_license_enabled && var.redpanda_enterprise_builtin_trial
     tiered_storage       = local.redpanda_tiered_storage_enabled
     tiered_storage_s3    = try(aws_s3_bucket.redpanda_tiered_storage[0].bucket, null)
     continuous_balancing = local.redpanda_continuous_balancing_enabled

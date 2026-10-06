@@ -9,8 +9,8 @@ deployment_id = "DO-NOT-EDIT-AUTO-GENERATED"
 
 # Own VPC. Pick ranges that no client VPC (or anything it routes, e.g. Redpanda BYOC
 # networks or kafka-on-eks: 10.0.0.0/16 + 100.64-66.0.0/16) already uses.
-# Brokers run in the secondary subnet of redpanda_zone, the only range the peered client
-# VPC routes to this VPC.
+# Brokers run in the secondary subnet of redpanda_zone, the only range a client network
+# needs to route to this VPC.
 vpc_cidr        = "10.2.0.0/16"
 secondary_cidrs = ["100.80.0.0/16", "100.81.0.0/16", "100.82.0.0/16"]
 
@@ -36,9 +36,12 @@ redpanda_broker_storage_size  = "400Gi"
 # Private DNS zone that the external listeners advertise (redpanda-<n>.<domain>)
 redpanda_external_domain = "redpanda.internal"
 
-# Optional VPC peering to a client VPC; null (default) creates no peering and only this
-# VPC reaches the external listeners. e.g. redpanda_peer_vpc_id = "vpc-0123456789abcdef0"
-redpanda_peer_vpc_id = null
+# Client networks. The stack does not create VPC peering (like Redpanda BYOC): the client
+# side peers with this VPC and routes. List the client CIDRs (firewall) and the client VPCs
+# to associate with the private DNS zone. See "Connect a client VPC" in README.md.
+# e.g. redpanda_client_cidrs = ["10.100.0.0/16"], redpanda_client_vpc_ids = ["vpc-0123456789abcdef0"]
+redpanda_client_cidrs   = []
+redpanda_client_vpc_ids = []
 
 # SASL/SCRAM superuser for clients
 redpanda_admin_username = "admin"
@@ -52,8 +55,12 @@ redpanda_console_exposure = "none"
 # resource with one (redpanda_connect_deployment = "auto" | "helm" | "pipeline")
 enable_redpanda_connect = false
 
-# Enterprise features, applied only when TF_VAR_redpanda_enterprise_license is exported
-# (see "Enterprise features" in README.md). Set one to false to keep it off.
+# Built-in 30-day Enterprise trial (new clusters, no key): enables Tiered Storage and
+# Continuous Data Balancing. After 30 days set a license or turn this off (README.md).
+redpanda_enterprise_builtin_trial = true
+
+# Enterprise features, applied with TF_VAR_redpanda_enterprise_license (or the trial above
+# for the cluster-side ones; see "Enterprise features" in README.md). Set one to false to keep it off.
 redpanda_enterprise_tiered_storage       = true
 redpanda_enterprise_continuous_balancing = true
 redpanda_enterprise_console_auth         = true

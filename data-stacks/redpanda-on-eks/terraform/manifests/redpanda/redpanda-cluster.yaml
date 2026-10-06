@@ -162,7 +162,7 @@ spec:
         bootstrapUser:
           mechanism: SCRAM-SHA-512
 
-    # External listeners for clients outside the cluster (this VPC or the peered VPC),
+    # External listeners for clients outside the cluster (this VPC or a connected client network),
     # exposed as NodePorts on the broker nodes: no load balancer in the data path, as in
     # Redpanda BYOC over VPC peering. Each broker advertises
     # redpanda-<n>.${EXTERNAL_DOMAIN}:<node port>; the route53-dns init container points

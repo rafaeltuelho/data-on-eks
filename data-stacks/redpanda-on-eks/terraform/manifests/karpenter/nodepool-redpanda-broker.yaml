@@ -1,5 +1,5 @@
 # Redpanda brokers: one dedicated node per broker (production docs), on-demand, single AZ
-# (var.redpanda_zone: its secondary subnet is the range routed from the peered client VPC). Uses the redpanda-broker-nvme
+# (var.redpanda_zone: its secondary subnet is the range client networks route here). Uses the redpanda-broker-nvme
 # EC2NodeClass so the local static provisioner exposes the instance store as `local-storage`.
 apiVersion: karpenter.sh/v1
 kind: NodePool

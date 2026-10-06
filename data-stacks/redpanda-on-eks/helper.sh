@@ -74,7 +74,7 @@ case "$1" in
     echo "Saved redpanda-ca.crt (CA of the external listeners)"
     ;;
   port-forward-console)
-    kubectl port-forward -n "$NS" svc/redpanda-console 8080:8080
+    kubectl port-forward -n "$NS" svc/redpanda-console-console 8080:8080
     ;;
   port-forward-grafana)
     kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80

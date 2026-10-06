@@ -16,9 +16,9 @@ The configuration follows the Redpanda guide
 | Redpanda `v26.2.3`, 3 brokers | `Redpanda` resource ([manifests/redpanda/redpanda-cluster.yaml](https://github.com/awslabs/data-on-eks/tree/main/data-stacks/redpanda-on-eks/terraform/manifests/redpanda/redpanda-cluster.yaml)) |
 | Redpanda Console | `Console` resource ([console.yaml](https://github.com/awslabs/data-on-eks/tree/main/data-stacks/redpanda-on-eks/terraform/manifests/redpanda/console.yaml)), reached with port-forward by default |
 | Redpanda Connect (optional) | ArgoCD Application `redpanda-connect` (`redpanda/connect` chart), or a `Pipeline` resource with a license |
-| Enterprise features (with a license) | Tiered Storage (S3), Continuous Data Balancing, Console login and RBAC, Connect `Pipeline` |
+| Enterprise features | Tiered Storage (S3) and Continuous Data Balancing, on by default for the [built-in 30-day trial](#built-in-30-day-trial-on-by-default). With a license key, also Console login and RBAC, and Connect `Pipeline` |
 | Monitoring | Chart ServiceMonitors + official dashboards from [redpanda-data/observability](https://github.com/redpanda-data/observability) |
-| External access | NodePorts on the broker nodes (no load balancer, like BYOC over VPC peering), Route 53 private zone, optional VPC peering |
+| External access | NodePorts on the broker nodes (no load balancer, like BYOC over VPC peering), Route 53 private zone. Client connectivity (peering, Transit Gateway) is set up by the client side, as with BYOC |
 
 ## Architecture
 
@@ -40,7 +40,7 @@ The configuration follows the Redpanda guide
 ### External access (NodePort)
 
 ```
-client (this VPC or peered VPC)
+client (this VPC, or a client VPC peered / routed to the broker subnet)
   -> redpanda-<n>.redpanda.internal:31092   Route 53 private zone, A record = broker node IP
   -> NodePort on the broker node             Service redpanda-external, externalTrafficPolicy: Local
   -> broker pod redpanda-<n>                 external listeners, TLS + SASL/SCRAM
@@ -59,17 +59,70 @@ latency matters. There are no per-GB load balancer charges, and there is one hop
   `bootstrap.<domain>` record, both pointing at the node IP. A broker changes node only when its
   node is replaced, and then it restarts and updates the records, the same way the BYOC agent
   manages its Route 53 zone.
-- **Firewall**: the node security group opens only the four NodePorts, and only to
-  `redpanda_client_cidrs`: the peer VPC CIDR (or this VPC's CIDR without peering) plus
-  `redpanda_external_client_cidrs`.
+- **Firewall**: the node security group opens only the four NodePorts, and only to this VPC's
+  CIDRs plus `redpanda_client_cidrs`.
 
-**VPC peering** (`redpanda_peer_vpc_id`) connects a client VPC in the same account and region. The
-stack sets up all of it, so clients need no extra setup:
+### Connect a client VPC
 
-- **Peering connection**: auto-accepted.
-- **Routes**: the client VPC routes only the **broker subnet**, which is the secondary CIDR of
-  `redpanda_zone` (`terraform output redpanda_client_routed_cidr`). This VPC routes the client CIDR back.
-- **DNS**: the private zone is associated with the client VPC, which must have DNS resolution enabled.
+As with Redpanda BYOC, the stack does not create the client connectivity: the client side sets up
+VPC peering (or a Transit Gateway attachment) and the routes. The stack only needs to know who the
+clients are, in `terraform/data-stack.tfvars`:
+
+```hcl
+redpanda_client_cidrs   = ["10.100.0.0/16"]           # firewall: opens the NodePorts to these CIDRs
+redpanda_client_vpc_ids = ["vpc-0123456789abcdef0"]   # DNS: associates the private zone (same account)
+```
+
+`terraform -chdir=terraform/_local output redpanda_client_connectivity` prints everything the client
+side needs: `vpc_id`, `routed_cidr` (the broker subnet, the secondary CIDR of `redpanda_zone`),
+`private_route_table_ids` and the DNS zone. Example with VPC peering, from the client account:
+
+```bash
+OUT=$(terraform -chdir=terraform/_local output -json redpanda_client_connectivity)
+RP_VPC=$(echo "$OUT" | jq -r .vpc_id); ROUTED=$(echo "$OUT" | jq -r .routed_cidr)
+CLIENT_VPC=vpc-0123456789abcdef0; CLIENT_CIDR=10.100.0.0/16
+
+# 1. Peering (same account and region: accept right away)
+PCX=$(aws ec2 create-vpc-peering-connection --vpc-id "$CLIENT_VPC" --peer-vpc-id "$RP_VPC" \
+  --query VpcPeeringConnection.VpcPeeringConnectionId --output text)
+aws ec2 accept-vpc-peering-connection --vpc-peering-connection-id "$PCX"
+
+# 2. Client VPC -> broker subnet (every client route table)
+for rt in $(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$CLIENT_VPC \
+    --query 'RouteTables[].RouteTableId' --output text); do
+  aws ec2 create-route --route-table-id "$rt" --destination-cidr-block "$ROUTED" --vpc-peering-connection-id "$PCX"
+done
+
+# 3. Redpanda VPC -> client CIDR (return traffic)
+for rt in $(echo "$OUT" | jq -r '.private_route_table_ids[]'); do
+  aws ec2 create-route --route-table-id "$rt" --destination-cidr-block "$CLIENT_CIDR" --vpc-peering-connection-id "$PCX"
+done
+```
+
+Then set `redpanda_client_cidrs` and `redpanda_client_vpc_ids` and run `./deploy.sh` (or do it before
+the first deploy).
+
+> **You can add clients after the first deploy.** Both inputs default to empty, so you can deploy the
+> stack first (only this VPC reaches the brokers), set up the client side whenever it is ready, then set
+> the inputs and re-run `./deploy.sh`. On an existing deployment, this is a single `terraform apply` that
+> updates in place:
+>
+> - the node security group gets one ingress rule per broker port per client CIDR
+> - the client VPCs are associated with the private zone; the zone and the brokers' records are kept
+> - the Console NLB (if `redpanda_console_exposure` is not `none`) updates its allowed CIDRs
+>
+> The Redpanda cluster does not change, so brokers do not restart. Add or remove clients the same way.
+
+Requirements and variants:
+
+- **DNS**: the client VPC must have DNS resolution and DNS hostnames enabled. For a client VPC in
+  **another account**, `redpanda_client_vpc_ids` does not work. Authorize the association from this account
+  (`aws route53 create-vpc-association-authorization --hosted-zone-id <dns_zone_id> --vpc VPCRegion=<region>,VPCId=<client-vpc>`),
+  then associate it from the client account (`aws route53 associate-vpc-with-hosted-zone ...`).
+- **Transit Gateway or VPN**: same idea. Route `routed_cidr` to the attachment, route the client
+  ranges back from `private_route_table_ids`, and add the client ranges to `redpanda_client_cidrs`.
+- **Cleanup**: delete the peering connection (and the client-side routes) before `./cleanup.sh`, as
+  they are not managed by this stack.
 
 **Avoiding routing clashes**: the routed range must not overlap anything the client VPC already
 routes. Both ranges are set in `terraform/data-stack.tfvars`:
@@ -100,24 +153,52 @@ export TF_VAR_redpanda_enterprise_license="$(cat redpanda.license)"
 
 The deployment takes about 30 minutes. At the end, `deploy.sh` waits for the cluster to be Ready, saves
 the external CA to `redpanda-ca.crt`, and prints the bootstrap address, the credentials, an `rpk`
-profile, and the Console and Grafana port-forward commands.
+profile, the kubectl setup, and the Console and Grafana port-forward commands.
+
+### Point kubectl at the cluster
+
+Both options use your AWS credentials (for example an SSO session). The identity that ran the deploy
+has cluster admin access.
+
+**Option 1: the kubeconfig the deploy created**. This applies to the current shell only and leaves
+`~/.kube/config` untouched:
 
 ```bash
-export KUBECONFIG=$(pwd)/kubeconfig.yaml
-kubectl get redpanda,console -n redpanda
+cd data-stacks/redpanda-on-eks
+export KUBECONFIG=$PWD/kubeconfig.yaml
+kubectl get nodes
+```
+
+**Option 2: add the cluster to your default kubeconfig** as context `redpanda-on-eks`:
+
+```bash
+aws eks update-kubeconfig --name redpanda-on-eks --region us-east-2 --alias redpanda-on-eks   # add --profile <profile> if needed
+kubectl config use-context redpanda-on-eks
+```
+
+Switch clusters later with `kubectl config get-contexts` and `kubectl config use-context <name>`.
+
+Check it works:
+
+```bash
+kubectl get redpanda,console -n redpanda      # Ready, valid license
+kubectl get applications -n argocd             # all Synced / Healthy
 ./helper.sh cluster-health
 ```
+
+Each kubectl call gets a token through `aws eks get-token`. When your SSO session expires, you get
+`Unauthorized` or token errors: run `aws sso login` again. The kubeconfig does not need to change.
 
 ## Access (port-forward by default)
 
 | UI | Command | Credentials |
 |---|---|---|
 | ArgoCD | `kubectl port-forward svc/argocd-server -n argocd 8080:443` → https://localhost:8080 | `admin` / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
-| Redpanda Console | `kubectl port-forward -n redpanda svc/redpanda-console 8080:8080` → http://localhost:8080 | none, or a Redpanda SASL user with a license |
+| Redpanda Console | `kubectl port-forward -n redpanda svc/redpanda-console-console 8080:8080` → http://localhost:8080 | none, or a Redpanda SASL user with a license |
 | Grafana | `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80` → http://localhost:3000 | `kubectl get secret grafana-admin-secret -n monitoring -o jsonpath='{.data.admin-password}' \| base64 -d` |
 
 **Console exposure**: set `redpanda_console_exposure = "internal"` (NLB in the broker subnet,
-reachable from the peered VPC) or `"internet-facing"` (NLB in the public subnets) to add an NLB. Access
+reachable from the client networks) or `"internet-facing"` (NLB in the public subnets) to add an NLB. Access
 is limited to `redpanda_console_allowed_cidrs`, which defaults to the broker client CIDRs. Console login
 (authentication and RBAC) needs an Enterprise license (see "Enterprise features"). Without one, anyone
 who reaches Console acts as the operator's bootstrap superuser, so restrict the CIDRs carefully.
@@ -131,7 +212,7 @@ terraform -chdir=terraform/_local output redpanda_admin_username
 terraform -chdir=terraform/_local output -raw redpanda_admin_password
 ```
 
-From a client in the peered VPC, with the CA copied to `~/redpanda-ca.crt`:
+From a client in a connected client VPC, with the CA copied to `~/redpanda-ca.crt`:
 
 ```bash
 rpk profile create redpanda-on-eks \
@@ -194,7 +275,8 @@ export TF_VAR_redpanda_enterprise_license="$(cat redpanda.license)"
 ./deploy.sh
 ```
 
-Terraform stores the license in Secret `redpanda-license`. The `Redpanda` resource uses it as the
+Without a key, the [built-in 30-day trial](#built-in-30-day-trial-on-by-default) covers the
+cluster-side features. Terraform stores the license in Secret `redpanda-license`. The `Redpanda` resource uses it as the
 cluster license (`enterprise.licenseSecretRef`), and the operator uses it as its own license, which the
 Connect controller needs. With a license, the stack also turns on these features. Set a variable to
 `false` to keep a feature off:
@@ -206,11 +288,38 @@ Connect controller needs. With a license, the stack also turns on these features
 | [Console authentication](https://docs.redpanda.com/streaming/current/console/config/security/authentication/) and [RBAC](https://docs.redpanda.com/streaming/current/console/config/security/authorization/) | `redpanda_enterprise_console_auth` | Users log in to Console with their Redpanda SASL/SCRAM credentials. `redpanda_admin_username` gets the Console `admin` role, and other users need role bindings in [console.yaml](https://github.com/awslabs/data-on-eks/tree/main/data-stacks/redpanda-on-eks/terraform/manifests/redpanda/console.yaml). Terraform generates the JWT signing key |
 | [Connect `Pipeline` resources](https://docs.redpanda.com/streaming/current/manage/kubernetes/k-connect-pipelines/) | `redpanda_connect_deployment = "auto"` | When `enable_redpanda_connect = true`, the operator Connect controller runs the sample pipeline instead of the Helm chart |
 
-`terraform -chdir=terraform/_local output redpanda_enterprise_features` lists what is active.
-Without a license, none of these features is configured, so the cluster never runs in a restricted
-"enterprise features without license" state. Removing the license later turns them off on the next
-deploy. With Tiered Storage, data that exists only in S3 stays in the bucket but is no longer readable
-through Redpanda.
+`terraform -chdir=terraform/_local output redpanda_enterprise_features` lists what is active, and
+`kubectl get redpanda -n redpanda` shows the license status (`Valid`, `Expired`, `Not Present`).
+
+### Built-in 30-day trial (on by default)
+
+Every new Redpanda cluster (24.3 or later) gets an Enterprise trial license valid for 30 days from the
+cluster's creation, with no key needed. `redpanda_enterprise_builtin_trial = true` (the default) uses it:
+without `TF_VAR_redpanda_enterprise_license`, the stack still enables the **cluster-side** features,
+**Tiered Storage** and **Continuous Data Balancing**. Two features need a license key and stay off on
+the trial:
+
+- **Console login and RBAC**: Console reads the license from its own configuration.
+- **Connect `Pipeline` resources**: the operator reads the license from a Secret.
+
+> **Warning: plan for day 30.** When the trial expires, inactive enterprise features are disabled,
+> active ones enter a **restricted state**, and Redpanda **blocks upgrades** to new feature releases
+> while enterprise features are in use without a valid license. Before day 30, do one of the following:
+>
+> - **Extend**: `rpk generate license --apply` gives one more 30-day trial key (one per email and
+>   business domain). Export it as `TF_VAR_redpanda_enterprise_license` and re-run `./deploy.sh`.
+> - **License it**: export a purchased key the same way.
+> - **Go Community**: set `redpanda_enterprise_builtin_trial = false` and re-run `./deploy.sh`.
+>   Tiered Storage is the hard one to back out of. Data that exists only in S3 stays in the bucket
+>   but is no longer readable through Redpanda, so stop new uploads and let local retention cover the
+>   data you need first. See
+>   [Disable Enterprise Features](https://docs.redpanda.com/streaming/current/get-started/licensing/disable-enterprise-features/).
+>
+> The trial applies only to **new** clusters, not to clusters upgraded to 24.3 or later. For long-lived
+> environments without a key, set `redpanda_enterprise_builtin_trial = false` before the first deploy.
+
+Removing a license key later (with the trial off) turns the features off on the next deploy, with the
+same Tiered Storage caveat.
 
 ## Cost estimate
 
@@ -247,7 +356,7 @@ it receives no samples: the base kube-prometheus-stack values keep metrics in th
 | Cross-AZ traffic (clients in another AZ than `redpanda_zone`) | $0.01/GB each direction | Put clients in the same AZ to avoid it. Broker-to-broker replication stays in one AZ and is free. Same-AZ VPC peering traffic is free |
 | NAT gateway data processing | $0.045/GB | Image pulls and AWS API calls only. Client traffic does not use NAT |
 | EKS control plane logs (CloudWatch) | $0.50/GB ingested | Usually a few GB a month |
-| Tiered Storage, Enterprise (S3 Standard) | $0.023/GB-month, PUT $0.005/1k, GET $0.0004/1k, plus $0.01/GB through the S3 interface endpoint | ≈ $23.50/month per TB retained in S3 |
+| Tiered Storage (S3 Standard), on by default with the built-in trial | $0.023/GB-month, PUT $0.005/1k, GET $0.0004/1k, plus $0.01/GB through the S3 interface endpoint | ≈ $23.50/month per TB retained in S3 |
 
 **Optional components**:
 
@@ -284,9 +393,9 @@ Kafka Consumer Offsets and Redpanda Connect. Consumer lag metrics are enabled wi
 The client VPC's built-in DNS server, the **Amazon Route 53 Resolver**, resolves the broker names.
 It listens at the VPC's base address + 2 (for example `172.31.0.2`) and at `169.254.169.253`.
 It answers from the private hosted zone `<redpanda_external_domain>`, which the stack associates with
-this VPC and with the peered VPC (`redpanda_peer_vpc_id`). The brokers' `route53-dns` init containers
-write the records in that zone. DNS lookups never cross the peering: each associated VPC resolves the
-zone locally. Only the Kafka traffic goes over the peering.
+this VPC and with the client VPCs (`redpanda_client_vpc_ids`). The brokers' `route53-dns` init
+containers write the records in that zone. DNS lookups never cross the peering: each associated VPC
+resolves the zone locally. Only the Kafka traffic goes over the peering.
 
 Check from a client instance:
 
@@ -304,8 +413,11 @@ If the names don't resolve:
   resolver at base + 2.
 - **Clients outside the VPC**: a laptop on VPN or an on-prem host needs a Route 53 Resolver inbound
   endpoint (or a DNS forwarder) in the client VPC.
-- **Other VPCs**: only this VPC and the peered VPC are associated with the zone. Associate any other
-  VPC with the zone before using it.
+- **Zone not associated**: only this VPC and `redpanda_client_vpc_ids` are associated with the zone.
+  Add the client VPC there (same account) or use a VPC association authorization (another account).
+- **Names resolve but connections time out**: check the routes on both sides (`routed_cidr` from the
+  client, the client CIDR back from `private_route_table_ids`) and that the client CIDR is in
+  `redpanda_client_cidrs`.
 - **Missing or stale records**: each broker publishes its records when it starts. Check what it wrote
   with `kubectl -n redpanda logs redpanda-0 -c route53-dns` and `./helper.sh get-external-services`
   (broker, node and node IP).
@@ -316,5 +428,6 @@ If the names don't resolve:
 ./cleanup.sh
 ```
 
-The broker data lives on instance store and is lost on cleanup. The Route 53 zone (with the records the brokers wrote), peering, routes
-and the Tiered Storage bucket (with its objects) are removed with the stack.
+Delete any client-side peering connection and its routes first, because the stack does not manage them.
+The broker data lives on instance store and is lost on cleanup. The Route 53 zone (with the records the
+brokers wrote) and the Tiered Storage bucket (with its objects) are removed with the stack.
