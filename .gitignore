@@ -73,3 +73,6 @@ website/package.json
 
 # Benchmark fork: exported Strimzi cluster CA (deployment-specific)
 strimzi-ca.crt
+
+# Output of commands run with nohup (e.g. nohup ./deploy.sh)
+nohup.out
