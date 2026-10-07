@@ -113,8 +113,8 @@ print_redpanda_summary() {
     echo "   rpk cluster info"
     echo ""
     echo "5. Redpanda Console:"
-    echo "   kubectl port-forward -n $ns svc/redpanda-console-console 8080:8080"
-    echo "   Open http://localhost:8080"
+    echo "   kubectl port-forward -n $ns svc/redpanda-console-console 8081:8080"
+    echo "   Open http://localhost:8081 (8080 is ArgoCD)"
     if [ "$console_auth" = "true" ]; then
         echo "   Log in with a Redpanda SASL user, e.g. ${user:-admin} (Console admin role)"
     fi

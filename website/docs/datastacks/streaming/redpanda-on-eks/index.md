@@ -194,7 +194,7 @@ Each kubectl call gets a token through `aws eks get-token`. When your SSO sessio
 | UI | Command | Credentials |
 |---|---|---|
 | ArgoCD | `kubectl port-forward svc/argocd-server -n argocd 8080:443` → https://localhost:8080 | `admin` / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
-| Redpanda Console | `kubectl port-forward -n redpanda svc/redpanda-console-console 8080:8080` → http://localhost:8080 | none, or a Redpanda SASL user with a license |
+| Redpanda Console | `kubectl port-forward -n redpanda svc/redpanda-console-console 8081:8080` → http://localhost:8081 | none, or a Redpanda SASL user with a license |
 | Grafana | `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80` → http://localhost:3000 | `kubectl get secret grafana-admin-secret -n monitoring -o jsonpath='{.data.admin-password}' \| base64 -d` |
 
 **Console exposure**: set `redpanda_console_exposure = "internal"` (NLB in the broker subnet,

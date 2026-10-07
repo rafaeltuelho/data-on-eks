@@ -74,7 +74,7 @@ case "$1" in
     echo "Saved redpanda-ca.crt (CA of the external listeners)"
     ;;
   port-forward-console)
-    kubectl port-forward -n "$NS" svc/redpanda-console-console 8080:8080
+    kubectl port-forward -n "$NS" svc/redpanda-console-console 8081:8080
     ;;
   port-forward-grafana)
     kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80
@@ -110,7 +110,7 @@ case "$1" in
     echo ""
     echo "Access:"
     echo "  export-ca                         - Save the external listener CA to redpanda-ca.crt"
-    echo "  port-forward-console              - Redpanda Console on http://localhost:8080"
+    echo "  port-forward-console              - Redpanda Console on http://localhost:8081"
     echo "  port-forward-grafana              - Grafana on http://localhost:3000"
     echo "  port-forward-argocd               - ArgoCD on https://localhost:8443"
     echo "  get-argocd-apps                   - Get ArgoCD applications"
