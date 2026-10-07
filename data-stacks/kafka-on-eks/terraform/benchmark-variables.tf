@@ -1,6 +1,7 @@
 #---------------------------------------------------------------
 # Benchmark flavor (Redpanda BYOC Tier 1) — inputs and derived values
-# Set environment-specific values in data-stack.tfvars. See BENCHMARK_CUSTOMIZATION.md.
+# Set environment-specific values in data-stack.tfvars. See BENCHMARK_CUSTOMIZATION.md
+# on the benchmark-against-redpanda-tier1 branch: https://github.com/rafaeltuelho/data-on-eks/blob/benchmark-against-redpanda-tier1/BENCHMARK_CUSTOMIZATION.md
 #---------------------------------------------------------------
 
 variable "benchmark_zone" {

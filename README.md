@@ -1,12 +1,12 @@
 > [!IMPORTANT]
-> **This is a fork of [awslabs/data-on-eks](https://github.com/awslabs/data-on-eks).** It was modified to
-> benchmark a Strimzi Kafka cluster against a **Redpanda BYOC Tier 1** cluster. The `kafka-on-eks` stack
-> is resized and reconfigured to match Redpanda BYOC Tier 1: same broker instances, single AZ,
-> local NVMe, VPC peering to the benchmark clients, and internal NLBs with TLS + SCRAM.
-> The base `infra/terraform/` gained `enable_*` toggles for optional shared components. They default
-> to `true`, so other stacks are unchanged.
-> See **[BENCHMARK_CUSTOMIZATION.md](BENCHMARK_CUSTOMIZATION.md)** for every change, the configuration
-> inputs, the deploy steps and the network setup.
+> **This is a fork of [awslabs/data-on-eks](https://github.com/awslabs/data-on-eks).** This branch adds a
+> new data stack, **[`redpanda-on-eks`](data-stacks/redpanda-on-eks/)**: self-managed Redpanda on EKS with
+> the official Redpanda Operator, deployed through ArgoCD. It has 3 brokers on local NVMe, TLS + SASL/SCRAM,
+> Redpanda Console, optional Redpanda Connect, Redpanda's monitoring dashboards, and NodePort access for
+> client VPCs, like Redpanda BYOC. It builds on the `benchmark-against-redpanda-tier1` branch (Strimzi vs
+> Redpanda BYOC Tier 1) and adds no further changes to `infra/terraform/`.
+> See **[REDPANDA_ON_EKS.md](REDPANDA_ON_EKS.md)** for what the branch adds and changes, and the
+> [stack README](data-stacks/redpanda-on-eks/README.md) to deploy it.
 
 ![Data on EKS](website/static/img/doeks-logo-green.png)
 # [Data on Amazon EKS (DoEKS)](https://awslabs.github.io/data-on-eks/)

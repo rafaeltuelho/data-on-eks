@@ -10,4 +10,4 @@ You no longer `kubectl apply` it by hand. The manifests live in `../terraform/ma
 | `KafkaRebalance` | `terraform/manifests/kafka/rebalance.yaml` |
 | `KafkaUser` (SCRAM) | `terraform/manifests/benchmark/kafka-user.yaml` |
 
-See [BENCHMARK_CUSTOMIZATION.md](../../../BENCHMARK_CUSTOMIZATION.md).
+See [BENCHMARK_CUSTOMIZATION.md](https://github.com/rafaeltuelho/data-on-eks/blob/benchmark-against-redpanda-tier1/BENCHMARK_CUSTOMIZATION.md) (on the `benchmark-against-redpanda-tier1` branch).

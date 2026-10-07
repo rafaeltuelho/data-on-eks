@@ -13,7 +13,8 @@ deployment_id = "DO-NOT-EDIT-AUTO-GENERATED"
 #---------------------------------------------------------------
 
 #---------------------------------------------------------------
-# Benchmark inputs (see benchmark-variables.tf and BENCHMARK_CUSTOMIZATION.md)
+# Benchmark inputs (see benchmark-variables.tf and BENCHMARK_CUSTOMIZATION.md on the
+# benchmark-against-redpanda-tier1 branch)
 # The Kafka user password is NOT set here: export TF_VAR_benchmark_kafka_admin_password
 #---------------------------------------------------------------
 # AZ shared with the Redpanda cluster and the benchmark clients
@@ -25,7 +26,8 @@ benchmark_controller_instance_type = "m7g.large"
 
 # Optional VPC peering to the benchmark client (worker) VPC; null (default) creates no peering.
 # Set it to the client VPC ID to peer, e.g. benchmark_peer_vpc_id = "vpc-0123456789abcdef0".
-# See "Network setup: VPC peering" in BENCHMARK_CUSTOMIZATION.md before enabling it.
+# See "Network setup: VPC peering" in BENCHMARK_CUSTOMIZATION.md
+# (benchmark-against-redpanda-tier1 branch) before enabling it.
 benchmark_peer_vpc_id = null
 
 # SCRAM-SHA-512 user for the external listener
