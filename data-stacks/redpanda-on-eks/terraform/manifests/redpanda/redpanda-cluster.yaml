@@ -106,7 +106,9 @@ spec:
 
     resources:
       cpu:
-        cores: ${CPU_CORES}
+        # Quoted: the Redpanda resource stores cores as a string, and an integer here shows
+        # as a change on every plan
+        cores: "${CPU_CORES}"
       memory:
         enable_memory_locking: true
         container:
@@ -158,7 +160,6 @@ spec:
         enabled: true
         mechanism: SCRAM-SHA-512
         secretRef: ${SUPERUSERS_SECRET_NAME}
-        users: []
         bootstrapUser:
           mechanism: SCRAM-SHA-512
 

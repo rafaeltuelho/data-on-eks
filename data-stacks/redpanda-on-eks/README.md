@@ -55,69 +55,93 @@ latency matters. There are no per-GB load balancer charges, and there is one hop
   node is replaced, and then it restarts and updates the records, the same way the BYOC agent
   manages its Route 53 zone.
 - **Firewall**: the node security group opens only the four NodePorts, and only to this VPC's
-  CIDRs plus `redpanda_client_cidrs`.
+  CIDRs and the CIDRs in the `<name>-redpanda-clients` prefix list.
 
 ### Connect a client VPC
 
-As with Redpanda BYOC, the stack does not create the client connectivity: the client side sets up
-VPC peering (or a Transit Gateway attachment) and the routes. The stack only needs to know who the
-clients are, in `terraform/data-stack.tfvars`:
+As with Redpanda BYOC, the stack does not manage the client connectivity. A separate Terraform
+project on the client side (for example a "peering" root module with its own state) creates
+everything client-specific:
+
+| What | Resource in the client project | Uses this stack's output |
+|---|---|---|
+| VPC peering (or a Transit Gateway attachment) | `aws_vpc_peering_connection` (+ accepter) | `redpanda_vpc_id` |
+| Client VPC -> broker subnet | `aws_route` in every client route table | `redpanda_client_connectivity.routed_cidr` |
+| Redpanda VPC -> client CIDR (return traffic) | `aws_route` in this VPC's private route tables | `redpanda_client_connectivity.private_route_table_ids` |
+| Firewall: allow the client CIDR to the NodePorts | `aws_ec2_managed_prefix_list_entry` | `redpanda_clients_prefix_list_id` |
+| DNS: resolve `*.redpanda.internal` in the client VPC | `aws_route53_zone_association` | `redpanda_private_zone_id` |
+
+`redpanda_external_node_ports` lists the ports clients connect to (Kafka 31092, Admin 31644, Schema
+Registry 30081, HTTP Proxy 30082). `terraform -chdir=terraform/_local output redpanda_client_connectivity`
+prints all of it in one object.
+
+This stack is built so that it never undoes the client project's changes: after the client project
+applies or destroys, `terraform plan` here shows **No changes**.
+
+- **Private zone**: only this VPC is associated inline, and the zone ignores changes to its VPC
+  associations (`lifecycle { ignore_changes = [vpc] }`).
+- **Prefix list** (`<name>-redpanda-clients`): created empty, ignores its entries. One ingress rule per
+  NodePort on the node security group references it. This VPC's own CIDRs keep their own rules.
+- **Route tables**: no inline `route {}` blocks anywhere (the VPC module uses separate `aws_route`
+  resources), so routes added by the client project stay.
+- Nothing here creates, accepts or references peering connections or client VPC IDs.
+
+Example in the client project (same account, same region; read the outputs with
+`terraform_remote_state` or pass them as variables, and look up the prefix list by name, see
+[Client allowlist (prefix list)](#client-allowlist-prefix-list)):
 
 ```hcl
-redpanda_client_cidrs   = ["10.100.0.0/16"]           # firewall: opens the NodePorts to these CIDRs
-redpanda_client_vpc_ids = ["vpc-0123456789abcdef0"]   # DNS: associates the private zone (same account)
+data "aws_ec2_managed_prefix_list" "redpanda_clients" {
+  name = "redpanda-on-eks-redpanda-clients" # "<name>-redpanda-clients"
+}
+
+resource "aws_vpc_peering_connection" "redpanda" {
+  vpc_id      = var.client_vpc_id
+  peer_vpc_id = var.redpanda_vpc_id
+  auto_accept = true
+}
+
+resource "aws_route" "client_to_redpanda" {
+  for_each                  = toset(var.client_route_table_ids)
+  route_table_id            = each.value
+  destination_cidr_block    = var.redpanda_routed_cidr
+  vpc_peering_connection_id = aws_vpc_peering_connection.redpanda.id
+}
+
+resource "aws_route" "redpanda_to_client" {
+  for_each                  = toset(var.redpanda_private_route_table_ids)
+  route_table_id            = each.value
+  destination_cidr_block    = var.client_cidr
+  vpc_peering_connection_id = aws_vpc_peering_connection.redpanda.id
+}
+
+resource "aws_ec2_managed_prefix_list_entry" "client" {
+  prefix_list_id = data.aws_ec2_managed_prefix_list.redpanda_clients.id
+  cidr           = var.client_cidr
+  description    = "bastion VPC (peering project)"
+}
+
+resource "aws_route53_zone_association" "client" {
+  zone_id = var.redpanda_private_zone_id
+  vpc_id  = var.client_vpc_id
+}
 ```
 
-`terraform -chdir=terraform/_local output redpanda_client_connectivity` prints everything the client
-side needs: `vpc_id`, `routed_cidr` (the broker subnet, the secondary CIDR of `redpanda_zone`),
-`private_route_table_ids` and the DNS zone. Example with VPC peering, from the client account:
-
-```bash
-OUT=$(terraform -chdir=terraform/_local output -json redpanda_client_connectivity)
-RP_VPC=$(echo "$OUT" | jq -r .vpc_id); ROUTED=$(echo "$OUT" | jq -r .routed_cidr)
-CLIENT_VPC=vpc-0123456789abcdef0; CLIENT_CIDR=10.100.0.0/16
-
-# 1. Peering (same account and region: accept right away)
-PCX=$(aws ec2 create-vpc-peering-connection --vpc-id "$CLIENT_VPC" --peer-vpc-id "$RP_VPC" \
-  --query VpcPeeringConnection.VpcPeeringConnectionId --output text)
-aws ec2 accept-vpc-peering-connection --vpc-peering-connection-id "$PCX"
-
-# 2. Client VPC -> broker subnet (every client route table)
-for rt in $(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$CLIENT_VPC \
-    --query 'RouteTables[].RouteTableId' --output text); do
-  aws ec2 create-route --route-table-id "$rt" --destination-cidr-block "$ROUTED" --vpc-peering-connection-id "$PCX"
-done
-
-# 3. Redpanda VPC -> client CIDR (return traffic)
-for rt in $(echo "$OUT" | jq -r '.private_route_table_ids[]'); do
-  aws ec2 create-route --route-table-id "$rt" --destination-cidr-block "$CLIENT_CIDR" --vpc-peering-connection-id "$PCX"
-done
-```
-
-Then set `redpanda_client_cidrs` and `redpanda_client_vpc_ids` and run `./deploy.sh` (or do it before
-the first deploy).
-
-> **You can add clients after the first deploy.** Both inputs default to empty, so you can deploy the
-> stack first (only this VPC reaches the brokers), set up the client side whenever it is ready, then set
-> the inputs and re-run `./deploy.sh`. On an existing deployment, this is a single `terraform apply` that
-> updates in place:
->
-> - the node security group gets one ingress rule per broker port per client CIDR
-> - the client VPCs are associated with the private zone; the zone and the brokers' records are kept
-> - the Console NLB (if `redpanda_console_exposure` is not `none`) updates its allowed CIDRs
->
-> The Redpanda cluster does not change, so brokers do not restart. Add or remove clients the same way.
+> **You can add clients at any time.** The prefix list starts empty, so after the first deploy only
+> this VPC reaches the brokers. Apply the client project whenever the client side is ready, and destroy
+> it to remove a client. This stack does not need a re-run, and the brokers do not restart.
 
 Requirements and variants:
 
 - **DNS**: the client VPC must have DNS resolution and DNS hostnames enabled. For a client VPC in
-  **another account**, `redpanda_client_vpc_ids` does not work. Authorize the association from this account
-  (`aws route53 create-vpc-association-authorization --hosted-zone-id <dns_zone_id> --vpc VPCRegion=<region>,VPCId=<client-vpc>`),
-  then associate it from the client account (`aws route53 associate-vpc-with-hosted-zone ...`).
+  **another account**, authorize the association from this account
+  (`aws_route53_vpc_association_authorization`), then associate it from the client account. The
+  prefix list entry is also written with this account's credentials (see
+  [Client allowlist (prefix list)](#client-allowlist-prefix-list)).
 - **Transit Gateway or VPN**: same idea. Route `routed_cidr` to the attachment, route the client
-  ranges back from `private_route_table_ids`, and add the client ranges to `redpanda_client_cidrs`.
-- **Cleanup**: delete the peering connection (and the client-side routes) before `./cleanup.sh`, as
-  they are not managed by this stack.
+  ranges back from `private_route_table_ids`, and add the client ranges to the prefix list.
+- **Cleanup**: destroy the client project before `./cleanup.sh`. Its routes, prefix list entries and
+  zone associations point at resources this stack deletes.
 
 **Avoiding routing clashes**: the routed range must not overlap anything the client VPC already
 routes. Both ranges are set in `terraform/data-stack.tfvars`:
@@ -130,6 +154,87 @@ secondary_cidrs = ["100.80.0.0/16", "100.81.0.0/16", "100.82.0.0/16"]    # one p
 The defaults avoid the Redpanda BYOC networks seen in this account (`10.0.0.0/16` and `10.1.0.0/20`)
 and `kafka-on-eks` (`10.0.0.0/16`, `100.64-66.0.0/16`). Change them before the first deploy: changing
 them later recreates the VPC.
+
+#### Client allowlist (prefix list)
+
+The firewall for client networks is a customer-managed prefix list that this stack creates and the
+client projects fill:
+
+- **The list**: `aws_ec2_managed_prefix_list.redpanda_clients`, named `<name>-redpanda-clients`
+  (`redpanda-on-eks-redpanda-clients` by default), IPv4, in this stack's region. Its ID is the output
+  `redpanda_clients_prefix_list_id`. The stack creates it empty and ignores its entries.
+- **The rules**: four ingress rules on the node security group, one per NodePort (31092, 31644, 30081,
+  30082), use the list as their source. This VPC's own CIDRs have separate rules and are not in the list.
+- **The effect**: a CIDR in the list reaches all four NodePorts as soon as it is added, with no change to
+  the security group and no re-run of `./deploy.sh`. Every listener still requires TLS and SASL/SCRAM.
+
+Who does what:
+
+| Task | Who | How |
+|---|---|---|
+| Create the list and the 4 rules, set its size | this stack | `redpanda_clients_prefix_list_max_entries` in `data-stack.tfvars`, `./deploy.sh` |
+| Add or remove a client CIDR | the client project | `aws_ec2_managed_prefix_list_entry`, `terraform apply` / `destroy` there |
+
+There is no input in this stack for client CIDRs: don't add client entries here.
+
+**Add a client network**
+
+1. In the client project, look the list up **by name** (`data "aws_ec2_managed_prefix_list"`, as in the
+   example above). The name is stable; the ID changes if this stack is destroyed and redeployed. If you
+   pass the ID instead, take it from `terraform -chdir=terraform/_local output -raw redpanda_clients_prefix_list_id`.
+2. Add one `aws_ec2_managed_prefix_list_entry` per client network and apply. Use the narrowest CIDR
+   that covers the clients (the client subnets rather than the whole VPC), never `0.0.0.0/0`, and a
+   `description` that names the owner. The CIDR must not overlap this VPC's ranges, and it only helps
+   if it is also routed (both sides) and the client VPC resolves the private zone.
+3. Check the entry, then connect from a client:
+
+   ```bash
+   aws ec2 get-managed-prefix-list-entries --region us-east-2 --prefix-list-id <pl-id>
+   nc -vz redpanda-0.redpanda.internal 31092        # port reachable
+   rpk cluster info                                 # TLS + SASL (rpk profile from "Clients")
+   ```
+
+**Remove a client network**: destroy its entry in the client project (or the whole client project).
+New connections from that CIDR are refused right away. Connections already open may keep working until
+they close, because security groups keep tracked connections when a rule changes. To cut a client off
+at once, also delete or rotate its SASL user.
+
+**Quick test without Terraform**: you can add an entry by hand. This stack ignores it, so remove it by
+hand too, or it stays allowed:
+
+```bash
+PL=$(terraform -chdir=terraform/_local output -raw redpanda_clients_prefix_list_id)
+VER=$(aws ec2 describe-managed-prefix-lists --region us-east-2 --prefix-list-ids "$PL" \
+  --query 'PrefixLists[0].Version' --output text)
+aws ec2 modify-managed-prefix-list --region us-east-2 --prefix-list-id "$PL" --current-version "$VER" \
+  --add-entries Cidr=10.255.0.0/24,Description=manual-test      # --remove-entries Cidr=... to undo
+```
+
+**Size and the security group quota**: every rule that references a prefix list counts as
+`max_entries` rules against the security group's inbound rules quota (60 by default, VPC quota
+`L-0EA8095F`). The node security group holds 12 base rules, 16 rules for this VPC's CIDRs (4 ports ×
+4 CIDRs) and the 4 prefix list rules, so `redpanda_clients_prefix_list_max_entries` defaults to `5`:
+12 + 16 + 4 × 5 = 48, which leaves room for the rules the AWS Load Balancer Controller adds.
+
+- When the list is full, adding an entry fails in the client project. Raise
+  `redpanda_clients_prefix_list_max_entries` and re-run `./deploy.sh`: the list is resized in place
+  and the brokers do not restart. Each extra entry costs 4 rules.
+- The plan here reads the account's quota and fails with a clear error if the total would exceed it
+  (it needs `servicequotas:GetServiceQuota`). Beyond that, raise the quota, or have clients share a
+  summarized CIDR.
+- You can't shrink the list below the number of entries it holds.
+
+**Other rules**
+
+- **Another account**: only the account that owns the list can change its entries. A client project in
+  another account needs a provider alias with credentials (an IAM role) in this account for the entry.
+  Sharing the list with AWS RAM only lets the other account reference it, not edit it.
+- **Concurrent changes**: every change creates a new list version. If two client projects apply at the
+  same time, one can fail with a version conflict; re-run it.
+- **Redeploying or destroying this stack**: destroy the client projects first. `./cleanup.sh` deletes
+  the list with any entries left, and the client project's state then points at a list that no longer
+  exists (remove those resources with `terraform state rm` there). After a redeploy the list is new
+  and empty: re-apply the client projects.
 
 ## Prerequisites
 
@@ -188,7 +293,7 @@ Each kubectl call gets a token through `aws eks get-token`. When your SSO sessio
 
 | UI | Command | Credentials |
 |---|---|---|
-| ArgoCD | `kubectl port-forward svc/argocd-server -n argocd 8080:443` → https://localhost:8080 | `admin` / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
+| ArgoCD | `kubectl port-forward svc/argocd-server -n argocd 8443:443` → https://localhost:8443 | `admin` / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
 | Redpanda Console | `kubectl port-forward -n redpanda svc/redpanda-console-console 8081:8080` → http://localhost:8081 | none, or a Redpanda SASL user with a license |
 | Grafana | `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80` → http://localhost:3000 | `kubectl get secret grafana-admin-secret -n monitoring -o jsonpath='{.data.admin-password}' \| base64 -d` |
 
@@ -388,7 +493,7 @@ Kafka Consumer Offsets and Redpanda Connect. Consumer lag metrics are enabled wi
 The client VPC's built-in DNS server, the **Amazon Route 53 Resolver**, resolves the broker names.
 It listens at the VPC's base address + 2 (for example `172.31.0.2`) and at `169.254.169.253`.
 It answers from the private hosted zone `<redpanda_external_domain>`, which the stack associates with
-this VPC and with the client VPCs (`redpanda_client_vpc_ids`). The brokers' `route53-dns` init
+this VPC. The client project associates the client VPCs (`aws_route53_zone_association`). The brokers' `route53-dns` init
 containers write the records in that zone. DNS lookups never cross the peering: each associated VPC
 resolves the zone locally. Only the Kafka traffic goes over the peering.
 
@@ -408,11 +513,12 @@ If the names don't resolve:
   resolver at base + 2.
 - **Clients outside the VPC**: a laptop on VPN or an on-prem host needs a Route 53 Resolver inbound
   endpoint (or a DNS forwarder) in the client VPC.
-- **Zone not associated**: only this VPC and `redpanda_client_vpc_ids` are associated with the zone.
-  Add the client VPC there (same account) or use a VPC association authorization (another account).
+- **Zone not associated**: check `aws route53 get-hosted-zone --id <redpanda_private_zone_id>` lists the
+  client VPC. If not, apply the client project's `aws_route53_zone_association` (same account), or a
+  VPC association authorization plus the association (another account).
 - **Names resolve but connections time out**: check the routes on both sides (`routed_cidr` from the
-  client, the client CIDR back from `private_route_table_ids`) and that the client CIDR is in
-  `redpanda_client_cidrs`.
+  client, the client CIDR back from `private_route_table_ids`) and that the client CIDR is in the prefix
+  list (`aws ec2 get-managed-prefix-list-entries --prefix-list-id <redpanda_clients_prefix_list_id>`).
 - **Missing or stale records**: each broker publishes its records when it starts. Check what it wrote
   with `kubectl -n redpanda logs redpanda-0 -c route53-dns` and `./helper.sh get-external-services`
   (broker, node and node IP).
@@ -423,6 +529,7 @@ If the names don't resolve:
 ./cleanup.sh
 ```
 
-Delete any client-side peering connection and its routes first, because the stack does not manage them.
+Destroy the client project (peering, routes, prefix list entries, zone associations) first, because the
+stack does not manage them.
 The broker data lives on instance store and is lost on cleanup. The Route 53 zone (with the records the
 brokers wrote) and the Tiered Storage bucket (with its objects) are removed with the stack.

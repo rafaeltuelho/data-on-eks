@@ -62,19 +62,19 @@ variable "redpanda_external_domain" {
   default     = "redpanda.internal"
 }
 
-# Client networks. Like Redpanda BYOC, the stack does not create the client connectivity
-# (VPC peering, Transit Gateway, VPN): the client side sets it up and routes
-# redpanda_client_routed_cidr (output) to this VPC. See "Connect a client VPC" in README.md.
-variable "redpanda_client_cidrs" {
-  description = "Client CIDRs allowed to reach the external listeners (node security group). This VPC's CIDRs are always allowed. Add the peered VPC, Transit Gateway or VPN ranges."
-  type        = list(string)
-  default     = []
-}
+# Client networks. Like Redpanda BYOC, the stack does not manage the client connectivity:
+# a client project (e.g. a separate peering module) peers with this VPC, adds the routes,
+# adds the client CIDRs to the redpanda-clients prefix list and associates the client VPC
+# with the private zone. See "Connect a client VPC" in README.md.
+variable "redpanda_clients_prefix_list_max_entries" {
+  description = "Size of the redpanda-clients prefix list (client CIDRs). Each of the 4 NodePort rules that reference it counts as this many rules against the node security group's quota (60 inbound by default). It can be raised later in place."
+  type        = number
+  default     = 5
 
-variable "redpanda_client_vpc_ids" {
-  description = "Client VPCs (same account) to associate with the private DNS zone so they resolve the broker names. For another account, use a Route 53 VPC association authorization instead (README.md)."
-  type        = list(string)
-  default     = []
+  validation {
+    condition     = var.redpanda_clients_prefix_list_max_entries >= 1
+    error_message = "redpanda_clients_prefix_list_max_entries must be at least 1."
+  }
 }
 
 variable "redpanda_admin_username" {
@@ -141,7 +141,7 @@ variable "redpanda_console_exposure" {
 }
 
 variable "redpanda_console_allowed_cidrs" {
-  description = "CIDRs allowed to reach the Console NLB. Defaults to the broker client CIDRs. Console has no login without an Enterprise license."
+  description = "CIDRs allowed to reach the Console NLB. Defaults to this VPC's CIDRs. Console has no login without an Enterprise license."
   type        = list(string)
   default     = []
 }
@@ -180,8 +180,9 @@ locals {
   redpanda_broker_subnet_cidr = var.secondary_cidrs[local.redpanda_zone_index]
   redpanda_broker_subnet_id   = module.vpc.private_subnets[length(local.azs) + local.redpanda_zone_index]
 
-  # Clients allowed to reach the external listeners (NodePorts on the broker nodes)
-  redpanda_client_cidrs = distinct(concat([var.vpc_cidr], var.secondary_cidrs, var.redpanda_client_cidrs))
+  # This VPC's CIDRs, always allowed to reach the external listeners (NodePorts on the
+  # broker nodes). Client networks are allowed through the redpanda-clients prefix list.
+  redpanda_vpc_cidrs = distinct(concat([var.vpc_cidr], var.secondary_cidrs))
 
   # Enterprise license and the features it unlocks. nonsensitive(): only the presence of
   # the license drives count/templates, never its value.
@@ -198,7 +199,7 @@ locals {
     var.redpanda_connect_deployment
   )
 
-  redpanda_console_allowed_cidrs = length(var.redpanda_console_allowed_cidrs) > 0 ? var.redpanda_console_allowed_cidrs : local.redpanda_client_cidrs
+  redpanda_console_allowed_cidrs = length(var.redpanda_console_allowed_cidrs) > 0 ? var.redpanda_console_allowed_cidrs : local.redpanda_vpc_cidrs
 
   # Variables available to the Karpenter templates (karpenter.tf)
   redpanda_karpenter_template_vars = {

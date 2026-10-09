@@ -43,7 +43,7 @@ base infrastructure changes:
 | Brokers | One dedicated `m7gd.2xlarge` node per broker (Karpenter NodePool `redpanda-broker`), single AZ, local NVMe formatted XFS |
 | Security | TLS (cert-manager) and SASL/SCRAM-SHA-512 on every listener, including the Admin API |
 | Client access | NodePorts on the broker nodes with no load balancer, like Redpanda BYOC over VPC peering. Brokers publish their node IPs to a Route 53 private zone (`redpanda-<n>.redpanda.internal`, `bootstrap.redpanda.internal`) |
-| Client networks | Set up by the client side (peering, Transit Gateway). The stack only opens the firewall and associates the DNS zone |
+| Client networks | Managed by a separate client project (peering, routes, prefix list entries, zone associations). The stack exposes a prefix list for the NodePorts and its private zone, and never undoes those changes |
 | Console and Connect | Redpanda Console (operator `Console` resource, port-forward by default). Optional Redpanda Connect (Helm chart, or the operator `Pipeline` resource with a license) |
 | Monitoring | Chart ServiceMonitors and the official Grafana dashboards from `redpanda-data/observability` |
 | Enterprise | The built-in 30-day trial (default on) enables Tiered Storage and Continuous Data Balancing. A license key also enables Console login/RBAC and Connect `Pipeline` |
@@ -104,7 +104,7 @@ The stack declares its own inputs in `terraform/redpanda-variables.tf`, with def
 |---|---|
 | Versions | `redpanda_operator_chart_version`, `redpanda_version`, `redpanda_connect_chart_version` |
 | Brokers | `redpanda_zone`, `redpanda_broker_replicas`, `redpanda_broker_instance_type`, `redpanda_broker_cpu_cores`, `redpanda_broker_memory`, `redpanda_broker_storage_size` |
-| Client access | `redpanda_external_domain`, `redpanda_client_cidrs`, `redpanda_client_vpc_ids` |
+| Client access | `redpanda_external_domain`, `redpanda_clients_prefix_list_max_entries` |
 | Users | `redpanda_admin_username`, `redpanda_admin_password` (export `TF_VAR_...`; generated when unset) |
 | Console and Connect | `enable_redpanda_console`, `redpanda_console_exposure`, `redpanda_console_allowed_cidrs`, `enable_redpanda_connect`, `redpanda_connect_deployment` |
 | Enterprise | `redpanda_enterprise_license` (export `TF_VAR_...`), `redpanda_enterprise_builtin_trial`, `redpanda_enterprise_tiered_storage`, `redpanda_enterprise_continuous_balancing`, `redpanda_enterprise_console_auth` |

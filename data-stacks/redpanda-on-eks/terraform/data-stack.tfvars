@@ -36,12 +36,12 @@ redpanda_broker_storage_size  = "400Gi"
 # Private DNS zone that the external listeners advertise (redpanda-<n>.<domain>)
 redpanda_external_domain = "redpanda.internal"
 
-# Client networks. The stack does not create VPC peering (like Redpanda BYOC): the client
-# side peers with this VPC and routes. List the client CIDRs (firewall) and the client VPCs
-# to associate with the private DNS zone. See "Connect a client VPC" in README.md.
-# e.g. redpanda_client_cidrs = ["10.100.0.0/16"], redpanda_client_vpc_ids = ["vpc-0123456789abcdef0"]
-redpanda_client_cidrs   = []
-redpanda_client_vpc_ids = []
+# Client networks. The stack does not manage the client connectivity (like Redpanda BYOC):
+# a client project (e.g. a separate peering module) peers with this VPC, adds the routes,
+# adds the client CIDRs to the redpanda-clients prefix list and associates the client VPC
+# with the private zone. See "Connect a client VPC" in README.md.
+# Prefix list size: each of the 4 NodePort rules counts as this many security group rules
+redpanda_clients_prefix_list_max_entries = 5
 
 # SASL/SCRAM superuser for clients
 redpanda_admin_username = "admin"

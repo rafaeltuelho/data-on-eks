@@ -16,7 +16,9 @@
 #---------------------------------------------------------------
 
 #---------------------------------------------------------------
-# Route 53 private hosted zone, associated with this VPC and var.redpanda_client_vpc_ids
+# Route 53 private hosted zone, associated with this VPC only. Client VPCs are associated
+# from outside this project (aws_route53_zone_association in the client's peering module),
+# so Terraform here ignores the zone's VPC associations after creation.
 #---------------------------------------------------------------
 resource "aws_route53_zone" "redpanda" {
   name    = var.redpanda_external_domain
@@ -26,15 +28,13 @@ resource "aws_route53_zone" "redpanda" {
     vpc_id = module.vpc.vpc_id
   }
 
-  dynamic "vpc" {
-    for_each = toset(var.redpanda_client_vpc_ids)
-    content {
-      vpc_id = vpc.value
-    }
-  }
-
   # The records are created by the brokers, not Terraform; delete them with the zone
   force_destroy = true
+
+  lifecycle {
+    # Keep the client VPC associations made by other projects
+    ignore_changes = [vpc]
+  }
 }
 
 #---------------------------------------------------------------
@@ -81,13 +81,14 @@ module "redpanda_broker_irsa" {
 }
 
 #---------------------------------------------------------------
-# NodePorts: open the external listener ports on the node security group to the clients
-# (the chart's NodePort Service; externalTrafficPolicy: Local keeps traffic on the
-# broker's own node)
+# NodePorts: open the external listener ports on the node security group (the chart's
+# NodePort Service; externalTrafficPolicy: Local keeps traffic on the broker's own node).
+#   - this VPC's own CIDRs: one rule per port per CIDR
+#   - client networks: one rule per port that references the redpanda-clients prefix list
 #---------------------------------------------------------------
 resource "aws_vpc_security_group_ingress_rule" "redpanda_external_nodeports" {
   for_each = {
-    for pair in setproduct(keys(local.redpanda_external_ports), local.redpanda_client_cidrs) :
+    for pair in setproduct(keys(local.redpanda_external_ports), local.redpanda_vpc_cidrs) :
     "${pair[0]}-${pair[1]}" => { name = pair[0], cidr = pair[1] }
   }
 
@@ -99,18 +100,94 @@ resource "aws_vpc_security_group_ingress_rule" "redpanda_external_nodeports" {
   cidr_ipv4         = each.value.cidr
 }
 
+# Client CIDRs allowed to reach the NodePorts. The list is created empty: client projects
+# (e.g. the peering module) add their CIDRs as aws_ec2_managed_prefix_list_entry
+# resources, so Terraform here ignores the entries.
+resource "aws_ec2_managed_prefix_list" "redpanda_clients" {
+  name           = "${local.name}-redpanda-clients"
+  address_family = "IPv4"
+  max_entries    = var.redpanda_clients_prefix_list_max_entries
+
+  lifecycle {
+    ignore_changes = [entry]
+
+    # Every rule that references the list counts as max_entries rules against the
+    # security group's inbound rules quota
+    precondition {
+      condition     = local.redpanda_node_sg_ingress_rules <= data.aws_servicequotas_service_quota.security_group_rules.value
+      error_message = "The node security group would need ${local.redpanda_node_sg_ingress_rules} inbound rules, above the quota of ${data.aws_servicequotas_service_quota.security_group_rules.value}. Lower redpanda_clients_prefix_list_max_entries or raise the VPC quota L-0EA8095F."
+    }
+  }
+
+  tags = {
+    Name          = "${local.name}-redpanda-clients"
+    deployment_id = var.deployment_id
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "redpanda_external_nodeports_clients" {
+  for_each = local.redpanda_external_ports
+
+  security_group_id = module.eks.node_security_group_id
+  description       = "Redpanda external ${each.key} (NodePort) from the client prefix list"
+  ip_protocol       = "tcp"
+  from_port         = each.value.node_port
+  to_port           = each.value.node_port
+  prefix_list_id    = aws_ec2_managed_prefix_list.redpanda_clients.id
+}
+
+# "Inbound or outbound rules per security group" (default 60)
+data "aws_servicequotas_service_quota" "security_group_rules" {
+  service_code = "vpc"
+  quota_code   = "L-0EA8095F"
+}
+
+locals {
+  # Inbound rules on the node security group: the EKS module's defaults and recommended
+  # rules (10), the base eks.tf additions (2), this VPC's NodePort rules, and the
+  # prefix list rules (max_entries each)
+  redpanda_node_sg_ingress_rules = (
+    12
+    + length(local.redpanda_external_ports) * length(local.redpanda_vpc_cidrs)
+    + length(local.redpanda_external_ports) * var.redpanda_clients_prefix_list_max_entries
+  )
+}
+
 #---------------------------------------------------------------
-# What a client network needs to connect (peering / Transit Gateway set up by the client)
+# What a client project (e.g. the peering module) needs: peer with vpc_id, route
+# routed_cidr to it and the client CIDR back through private_route_table_ids, add the
+# client CIDR to the prefix list and associate the client VPC with the private zone
 #---------------------------------------------------------------
+output "redpanda_vpc_id" {
+  description = "VPC of the Redpanda cluster (peer the client VPC with it)"
+  value       = module.vpc.vpc_id
+}
+
+output "redpanda_clients_prefix_list_id" {
+  description = "Managed prefix list allowed to reach the broker NodePorts (add client CIDRs as aws_ec2_managed_prefix_list_entry)"
+  value       = aws_ec2_managed_prefix_list.redpanda_clients.id
+}
+
+output "redpanda_private_zone_id" {
+  description = "Route 53 private zone of the broker names (associate client VPCs with aws_route53_zone_association)"
+  value       = aws_route53_zone.redpanda.zone_id
+}
+
+output "redpanda_external_node_ports" {
+  description = "NodePorts of the external listeners on the broker nodes"
+  value       = { for name, p in local.redpanda_external_ports : name => p.node_port }
+}
+
 output "redpanda_client_connectivity" {
-  description = "Inputs for the client side: peer with vpc_id, route routed_cidr to it, and route the client CIDR back through private_route_table_ids"
+  description = "Everything a client project needs to connect a client network"
   value = {
     vpc_id                  = module.vpc.vpc_id
     vpc_cidrs               = concat([var.vpc_cidr], var.secondary_cidrs)
     routed_cidr             = local.redpanda_broker_subnet_cidr
     private_route_table_ids = module.vpc.private_route_table_ids
+    prefix_list_id          = aws_ec2_managed_prefix_list.redpanda_clients.id
     dns_zone_id             = aws_route53_zone.redpanda.zone_id
     dns_zone_name           = var.redpanda_external_domain
-    allowed_client_cidrs    = local.redpanda_client_cidrs
+    node_ports              = { for name, p in local.redpanda_external_ports : name => p.node_port }
   }
 }
